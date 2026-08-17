@@ -231,7 +231,7 @@ int main(int argc, char* argv[]) {
 
 
 
-    std::string f = "/home/descourt/Bureau/epic-synthwave-mixtape-for-men-with-balls-of-steel-vol-1.wav"; //R3-099 - A.wav"; //FifeAndDrumsStereo.wav"; // R3-099 - A.wav";
+    std::string f = "path/to/file"; // R3-099 - A.wav";
 
     //    size_t channels = 0; 
    // double sample_rate = 44100;
@@ -415,13 +415,13 @@ int main(int argc, char* argv[]) {
                         int w = std::max(1, static_cast<int>(barWidth));
 
                         // --- Canal Gauche (Panneau du haut) ---
-                        int hLeft = 0.25 * static_cast<int>(normLeft * (paneHeight - 20));
+                        int hLeft =  static_cast<int>(normLeft * (paneHeight - 20));
                         SDL_FRect rectLeft{ (float)x, (float)(paneHeight - hLeft), (float)w, (float)hLeft };
                         SDL_SetRenderDrawColor(renderer, 0, 180, 255, 255); // Cyan
                         SDL_RenderFillRect(renderer, &rectLeft);
 
                         // --- Canal Droit (Panneau du bas) ---
-                        int hRight = 0.25 * static_cast<int>(normRight * (paneHeight - 20));
+                        int hRight =  static_cast<int>(normRight * (paneHeight - 20));
                         SDL_FRect rectRight{ (float)x, (float)(paneHeight ), (float)w, (float)hRight };
                         SDL_SetRenderDrawColor(renderer, 255, 0, 128, 255); // Magenta
                         SDL_RenderFillRect(renderer, &rectRight);
