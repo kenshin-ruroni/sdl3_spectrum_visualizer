@@ -6,6 +6,13 @@
 #include "./dr_libs/dr_mp3.h"
 
 #include "miniaudio.h"
+#include "imgui.h"
+#include "imgui_impl_sdl3.h"
+
+#include  "imgui_impl_sdlrenderer3.h"
+
+#include  "imgui_impl_opengl3.h"
+
 #include "spectrogram_renderer.h"
 
 
@@ -398,8 +405,6 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
                     SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
 
-                    SDL_RenderPresent(renderer);
-
                 }
 
         }
@@ -411,12 +416,13 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
     inline void process_spectrum_capture_to_playback(bool stop_requested,SDL_Renderer* renderer, SDL_AudioStream* playback_stream , SDL_AudioStream* capture_stream, std::vector<float> *buffer)
     {
 
-            size_t buffer_size = SDL_GetAudioStreamAvailable( capture_stream );  // number of bytes the stream has accumulated so far.
-            std::vector<float> buff(buffer_size);
+            int buffer_size = SDL_GetAudioStreamAvailable( capture_stream );  // number of bytes the stream has accumulated so far.
+            
             if ( buffer_size > 0 && !stop_requested )
             {
-                size_t frame_size_in_bytes = sizeof(float) * 2;
                 std::vector<float> buff(buffer_size);
+                size_t frame_size_in_bytes = sizeof(float) * 2;
+
                 SDL_GetAudioStreamData(capture_stream,buff.data(),buffer_size);
 
                 last_audio_cursor_stream = audio_cursor_stream;
@@ -481,8 +487,6 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                     // Ligne de séparation médiane
                     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
                     SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
-
-                    SDL_RenderPresent(renderer);
                 }
                 // playback
                 SDL_PutAudioStreamData(playback_stream,buff.data(),buffer_size );
@@ -493,12 +497,56 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
 
 int main(int argc, char* argv[]) 
 {
-    SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
+
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
+        printf("Erreur d'initialisation SDL: %s\n", SDL_GetError());
+        return -1;
+    }
 
 
+   
     SDL_Window* window = SDL_CreateWindow("Spectrogramme 2D - SDL3", WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_RESIZABLE);
+    
+    if (!window) {
+        printf("Erreur de création de la fenêtre: %s\n", SDL_GetError());
+        return -1;
+    }
+    
     SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
+    if (!renderer) 
+    {
+        return -1;
+    }
+
     SDL_Texture*  texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, WINDOW_WIDTH, WINDOW_HEIGHT);
+
+    SDL_Window* window_ui = SDL_CreateWindow("Controles", 500, 400, SDL_WINDOW_RESIZABLE);
+    SDL_Renderer* renderer_ui = SDL_CreateRenderer(window_ui, NULL);
+    if (!renderer_ui) return -1;
+
+    // Forcer le positionnement initial de la fenêtre UI sur le bureau (ex: x=100, y=100)
+    SDL_SetWindowPosition(window_ui, 100, 100);
+
+    //  Initialiser le contexte Dear ImGui
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Touches clavier
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;  // Manette
+    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; 
+
+    // 3. Configurer les styles d'ImGui (ex: thème sombre)
+    ImGui::StyleColorsDark();
+
+    ImGuiStyle& style = ImGui::GetStyle();
+    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+        style.WindowRounding = 0.0f;
+        style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+    }
+
+    ImGui_ImplSDL3_InitForSDLRenderer(window_ui, renderer_ui);
+    ImGui_ImplSDLRenderer3_Init(renderer_ui);
+
     spectrogram_renderer spectrogram(renderer,texture);
 
     SDL_Surface *surface =  SDL_GetWindowSurface(window);
@@ -517,21 +565,21 @@ int main(int argc, char* argv[])
 
 
 
-    std::string f = "path";
+    std::string f = "/home/descourt/Bureau/epic-synthwave-mixtape-for-men-with-balls-of-steel-vol-1.wav"; //R3-099 - A.wav"; //FifeAndDrumsStereo.wav"; // R3-099 - A.wav";
 
-
+    //f = "/home/descourt/Téléchargements/Procedentem sponsum.wav"; //Recordare virgo mater [TubeRipper.cc].flac";
 
     //    size_t channels = 0; 
    // double sample_rate = 44100;
    // ma_read_from_wav_file(f.c_str(),&samples,&channels,&sample_rate);
 
-    uint channels = 0; 
+    uint channels = 2; 
     uint sample_rate = 44100;
-    load_wav_file(f, &samples,&channels,&sample_rate);
+    //load_wav_file(f, &samples,&channels,&sample_rate);
 
     size_t samples_cursor = 0, next_cursor = 0;
 
-      alignas(64) std::atomic<bool> stop_playback = false;
+    alignas(64) std::atomic<bool> stop_playback = false;
 
       /*
     std::thread playback = std::thread([&,channels,sample_rate](spectrogram_renderer *spectrogram)->void
@@ -618,9 +666,29 @@ int main(int argc, char* argv[])
         SDL_ResumeAudioStreamDevice(capture_stream);
 
         bool stop_playback_requested = false;
-    while (running && stop_playback.load() != true && samples_cursor < samples.size()) 
+
+
+        // 1. Liste des options disponibles pour l'analyseur
+        const char* fft_visualizer_style[] = { 
+            "spectrum analyzer", 
+            "spectrogram", 
+            "capture to playback"
+        };
+
+    // Index de l'élément actuellement sélectionné (à déclarer en variable persistante/globale)
+    static int current_window_idx = 1; // "Hann" par défaut
+
+    // Libellé affiché à l'écran basé sur l'élément sélectionné
+    const char* combo_preview_value = fft_visualizer_style[current_window_idx];
+    float gain = std::pow(10.f,0.f/20.f);
+
+    while (running && stop_playback.load() != true ) 
     {
-        while (SDL_PollEvent(&event)) {
+        while (SDL_PollEvent(&event)) 
+        {
+
+            ImGui_ImplSDL3_ProcessEvent(&event);
+
             if (event.type == SDL_EVENT_QUIT)
             {
                  running = false;
@@ -629,18 +697,80 @@ int main(int argc, char* argv[])
         }
 
       //  process_spectrum_play_back(paneHeight,next_cursor,minimum_audio, samples_cursor, stream,renderer, &samples,&buffer);
-                   
-        process_spectrum_capture_to_playback(stop_playback_requested,renderer, playback_stream,capture_stream,&buffer);
+      
+        ImGui_ImplSDLRenderer3_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        ImGui::NewFrame();
+        // Construit l'interface pour qu'elle prenne toute la place de la fenêtre UI
+        int ui_w, ui_h;
+        SDL_GetWindowSize(window_ui, &ui_w, &ui_h);
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(ImVec2((float)ui_w, (float)ui_h));
+
+        // Fenêtre ImGui fixe (sans titre ni bordure interne car c'est la fenêtre OS qui fait office de cadre)
+        ImGuiWindowFlags ui_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
+        
+        ImGui::Begin("menu", nullptr, ui_flags);
+        ImGui::Separator();
+
+
+        // Section Configuration
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "sprectum visualizer");
+        ImGui::Separator();
+            if (ImGui::BeginCombo("analyzer style", combo_preview_value)) 
+            {
+                for (int n = 0; n < IM_ARRAYSIZE(fft_visualizer_style); n++) 
+                {
+                    const bool is_selected = (current_window_idx == n);
                     
+                    // Affichage de chaque option dans la liste déroulante
+                    if (ImGui::Selectable(fft_visualizer_style[n], is_selected)) {
+                        current_window_idx = n; // Met à jour l'index sélectionné
+                        
+                    }
+
+                    // Définir le focus initial sur l'élément sélectionné
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+               ImGui::EndCombo();  
+            }
+
+        ImGui::SliderFloat("Gain (dB)", &gain, 0.0f, 20.0f);
+            ImGui::Spacing();
+           
+        ImGui::End();
+
+        // 3. Rendu de la scène
+        ImGui::Render(); // Calcule les géométries d'ImGui
+
+    
+        process_spectrum_capture_to_playback(stop_playback_requested,renderer, playback_stream,capture_stream,&buffer);
+
+
+        ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer_ui);  
+
+        SDL_RenderPresent(renderer);
+
+        SDL_SetRenderDrawColor(renderer_ui, 45, 45, 45, 255);  // Fond gris moyen
+        SDL_RenderClear(renderer_ui);
+        // On force le dessin d'ImGui sur le renderer de la deuxième fenêtre
+        ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer_ui);
+        SDL_RenderPresent(renderer_ui);
 
     }
                 
-            
 
-        
 
    // playback.join();
 
+    ImGui_ImplSDLRenderer3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+
+    SDL_DestroyRenderer(renderer_ui);
+    SDL_DestroyWindow(window_ui);
     SDL_DestroyAudioStream(playback_stream);
     SDL_DestroyMutex(spectrogram.g_audioMutex);
     SDL_DestroyRenderer(renderer);

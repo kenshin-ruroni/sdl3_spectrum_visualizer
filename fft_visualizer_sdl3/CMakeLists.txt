@@ -11,11 +11,11 @@ message(STATUS "Téléchargement de Dear ImGui depuis GitHub...")
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        master # Recommandé: branche 'docking' ou 'master' selon vos besoins
+    GIT_TAG        docking 
 )
 FetchContent_MakeAvailable(imgui)
 
-set(imgui_SOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src")
+set(imgui_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src )
 
 set(IMGUI_SOURCES
     ${imgui_SOURCE_DIR}/imgui.cpp
@@ -60,7 +60,12 @@ set(PROJECT_SOURCES
         dr_libs/dr_wav.h
 )
 
+#find_package(OpenGL REQUIRED)
+
+
 add_executable(${PROJECT_NAME} main.cpp ${IMGUI_SOURCES} )
+
+#target_link_libraries(${PROJECT_NAME} PRIVATE OpenGL::GL)
 
 if (MSVC)
 
@@ -68,14 +73,14 @@ if (MSVC)
 
     #target_link_options(pitch_control_daw_qt PRIVATE "/NODEFAULTLIB:library") 
     #target_link_directories(pitch_control_daw_qt PRIVATE ${CMAKE_SOURCE_DIR}/SDL3/lib)
-    target_link_libraries(${PROJECT_NAME} PRIVATE  ${CMAKE_SOURCE_DIR}/SDL3/lib/SDL3.lib) # SDL3
+    target_link_libraries(${PROJECT_NAME} PRIVATE  ${CMAKE_SOURCE_DIR}/SDL3.lib) # SDL3
 
 endif()
 
 if(LINUX)
 
         add_compile_options(-msse2 -lpthread -lm -march=native -mfma  )
-        target_include_directories(${PROJECT_NAME} PUBLIC  /usr/local/include ./build/_deps/imgui-src )  
+        target_include_directories(${PROJECT_NAME} PUBLIC  /usr/local/include ./build/_deps/imgui-src ./build/_deps/imgui-src/backends )  
         target_link_directories(${PROJECT_NAME} PUBLIC . )
         target_link_libraries( ${PROJECT_NAME} PRIVATE  ${CMAKE_SOURCE_DIR}/libSDL3.a ) # SDL3
 
