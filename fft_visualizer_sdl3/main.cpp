@@ -14,7 +14,7 @@
 #include  "imgui_impl_opengl3.h"
 
 #include "spectrogram_renderer.h"
-
+#include "imfilebrowser.h"
 
 inline void load_wav_file(std::string &path,std::vector<float> *interleaved_samples, uint *channels, uint *sample_rate)
 {
@@ -520,7 +520,7 @@ int main(int argc, char* argv[])
 
     SDL_Texture*  texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, WINDOW_WIDTH, WINDOW_HEIGHT);
 
-    SDL_Window* window_ui = SDL_CreateWindow("Controles", 500, 400, SDL_WINDOW_RESIZABLE);
+    SDL_Window* window_ui = SDL_CreateWindow("Controles", 500, 400, SDL_WINDOW_TRANSPARENT );
     SDL_Renderer* renderer_ui = SDL_CreateRenderer(window_ui, NULL);
     if (!renderer_ui) return -1;
 
@@ -534,6 +534,13 @@ int main(int argc, char* argv[])
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Touches clavier
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;  // Manette
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; 
+
+
+    static ImGui::FileBrowser fileDialog(ImGuiFileBrowserFlags_CloseOnEsc);
+
+// Variable pour stocker le chemin du fichier audio ou de configuration choisi
+    static std::string selected_file_path = "Aucun fichier sélectionné";
+
 
     // 3. Configurer les styles d'ImGui (ex: thème sombre)
     ImGui::StyleColorsDark();
@@ -682,16 +689,23 @@ int main(int argc, char* argv[])
     const char* combo_preview_value = fft_visualizer_style[current_window_idx];
     float gain = std::pow(10.f,0.f/20.f);
 
-    while (running && stop_playback.load() != true ) 
+    while (running ) 
     {
         while (SDL_PollEvent(&event)) 
         {
 
             ImGui_ImplSDL3_ProcessEvent(&event);
 
-            if (event.type == SDL_EVENT_QUIT)
+            if ( event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED )
             {
-                 running = false;
+                Uint32 closed_id = event.window.windowID;
+                if (closed_id == SDL_GetWindowID(window)) {
+                    running = false; // Fermer tout si la fenêtre principale se ferme
+                }
+                //if (closed_id == SDL_GetWindowID(window_ui)) {
+                //    SDL_HideWindow(window_ui); // Masquer simplement l'UI si on clique sur sa croix
+               // }
+                 
                 stop_playback.store(true);
             }
         }
@@ -736,9 +750,55 @@ int main(int argc, char* argv[])
                 }
                ImGui::EndCombo();  
             }
-
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::Separator();
         ImGui::SliderFloat("Gain (dB)", &gain, 0.0f, 20.0f);
-            ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Text("Fichier source :");
+        ImGui::TextUnformatted(selected_file_path.c_str());
+
+        // 2. Bouton pour ouvrir l'explorateur
+        if (ImGui::Button("Ouvrir un fichier audio...")) {
+            // Configurer le titre et les extensions autorisées
+            fileDialog.SetTitle("Choisir un fichier audio (.wav, .flac, .mp3)");
+            fileDialog.SetTypeFilters({ ".wav", ".mp3", ".flac" });
+            
+            // Ouvrir la boîte de dialogue
+            fileDialog.Open();
+        }
+
+        // 4. Vérifier si l'utilisateur a validé ou fermé la boîte de dialogue
+        if (fileDialog.HasSelected()) {
+            // Récupérer le chemin absolu du fichier sélectionné
+            selected_file_path = fileDialog.GetSelected().string();
+            
+            // --- APPLIQUER VOTRE LOGIQUE ICI ---
+            // Exemple : charger_fichier_audio(selected_file_path);
+            
+            fileDialog.ClearSelected(); // Réinitialiser le dialogue
+        }
+
+        if (fileDialog.IsOpened()) 
+        {
+            ImGui::SameLine();
+            if (ImGui::Button("close")) 
+            {
+                fileDialog.Close();
+            }
+            // Récupérer la taille actuelle de votre fenêtre SDL d'interface (window_ui)
+            int ui_w, ui_h;
+            SDL_GetWindowSize(window_ui, &ui_w, &ui_h);
+            
+            // On force la fenêtre de l'explorateur à être légèrement plus petite 
+            // que la fenêtre système pour que la croix 'X' reste accessible.
+            ImGui::SetNextWindowSize(ImVec2((float)ui_w - 40.0f, (float)ui_h - 60.0f));
+            ImGui::SetNextWindowPos(ImVec2(20.0f, 40.0f));
+        }
+
+        fileDialog.Display();
            
         ImGui::End();
 

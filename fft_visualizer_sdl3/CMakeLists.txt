@@ -26,6 +26,7 @@ set(IMGUI_SOURCES
     # Backends requis pour faire le pont avec SDL3 et SDL_Renderer
     ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer3.cpp
+    imfilebrowser.h
 )
 
 
