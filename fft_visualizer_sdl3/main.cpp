@@ -7,6 +7,7 @@
 
 #include "miniaudio.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "imgui_impl_sdl3.h"
 
 #include  "imgui_impl_sdlrenderer3.h"
@@ -16,7 +17,7 @@
 #include "spectrogram_renderer.h"
 #include "imfilebrowser.h"
 
-inline void load_wav_file(std::string &path,std::vector<float> *interleaved_samples, uint *channels, uint *sample_rate)
+inline bool load_wav_file(std::string &path,std::vector<float> *interleaved_samples, uint *channels, uint *sample_rate)
 {
 
     drwav_uint64 totalPCMFrameCount;
@@ -26,14 +27,64 @@ inline void load_wav_file(std::string &path,std::vector<float> *interleaved_samp
     if (pSampleData == NULL)
     {
         // Error opening and reading WAV file.
-        return;
+        std::string msg = "an error occurred while loading file '"; msg+=path.c_str();msg+="'.";
+        printf("%s \n", msg.c_str());
+        return false;
     }
 
     // build node data
     //  copy samples to node data structure
     interleaved_samples->resize(totalPCMFrameCount* *channels);
     memcpy(interleaved_samples->data(),pSampleData,totalPCMFrameCount* *channels * sizeof(float));
+    return true;
 }
+
+static bool load_flac_file(std::string &path,std::vector<float> *interleaved_samples, uint *channels, uint *sample_rate)
+{
+
+    drwav_uint64 totalPCMFrameCount;
+    float* pSampleData = drflac_open_file_and_read_pcm_frames_f32(path.c_str(), channels, sample_rate, &totalPCMFrameCount, NULL);
+    if (pSampleData == NULL)
+    {
+        // Error opening and reading WAV file.
+        std::string msg = "an error occurred while loading file '"; msg+=path.c_str();msg+="'.";
+        printf("%s \n", msg.c_str());
+        return false;
+    }
+
+    // build node data
+    //  copy samples to node data structure
+    interleaved_samples->resize(totalPCMFrameCount * *channels);
+    memcpy(interleaved_samples->data(),pSampleData,totalPCMFrameCount* *channels*sizeof(float));
+    drwav_free(pSampleData, NULL); // free memory
+    return true;
+}
+
+static inline bool load_mp3_file(std::string &path,std::vector<float> *interleaved_samples, uint *channels, uint *sample_rate)
+    {
+
+        drmp3_uint64 totalPCMFrameCount = 0;
+        drmp3_config config;
+
+
+
+        float* pSampleData = drmp3_open_file_and_read_pcm_frames_f32(path.c_str(),&config, &totalPCMFrameCount, NULL);
+        if (pSampleData == NULL)
+        {
+            std::string msg = "an error occurred while loading file '"; msg+=path.c_str();msg+="'.";
+            printf("%s \n", msg.c_str());
+            return false;
+        }
+        *channels = config.channels;
+        *sample_rate = config.sampleRate;
+        // build node data
+        //  copy samples to node data structure
+        interleaved_samples->resize(totalPCMFrameCount*config.channels);
+        memcpy(interleaved_samples->data(),pSampleData,totalPCMFrameCount* *channels *sizeof(float));
+        drwav_free(pSampleData, NULL); // free memory
+        return true;
+    }
+
 
         // Wave, audio wave data
         typedef struct Wave
@@ -140,7 +191,7 @@ inline void load_wav_file(std::string &path,std::vector<float> *interleaved_samp
 
                 return success;
         }
-        static inline bool ma_read_from_wav_file(const char *file_name, std::vector<float> *interleaved_samples, size_t *channels, double *sample_rate)
+        static inline bool ma_read_from_wav_file(const char *file_name, std::vector<float> *interleaved_samples, size_t *channels, size_t *sample_rate)
         {
             Wave wave = { 0 };
 
@@ -331,7 +382,10 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
             }
         }
 
-        constexpr float norm = 1.f/10.f;
+    alignas(64) std::atomic<bool> playback = false; 
+    alignas(64) std::atomic<bool> stop_playback_requested = false;
+
+    constexpr float norm = 1.f/10.f;
     inline void process_spectrum_play_back(size_t paneHeight,size_t& next_cursor,int minimum_audio, size_t &samples_cursor, SDL_AudioStream* stream,SDL_Renderer *renderer, std::vector<float> *samples,std::vector<float> *buffer)
     {
             if (SDL_GetAudioStreamQueued(stream) < minimum_audio)
@@ -346,6 +400,7 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                 samples_cursor = next_cursor;
                 if ( samples_cursor >= samples->size() - 1 )
                 {
+                    playback.store(false);
                     return;
                 }
 
@@ -495,6 +550,93 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
 
     }
 
+    alignas(64) std::atomic<uint> channels = 2; 
+    alignas(64) std::atomic<uint> sample_rate = 44100;
+    alignas(64) std::atomic<bool> file_loaded = false;
+
+
+    static bool load_audio_file(const char* file_path, std::vector<float> *samples)
+    {
+        file_loaded.store(false);
+        std::thread ([](const char* file_path,std::vector<float> *samples){
+
+            auto start = std::chrono::high_resolution_clock::now();
+            
+            uint c = 2;
+            uint s = 44100;
+
+            auto path = std::filesystem::path(file_path);
+            std::string extension = path.extension().string();
+            std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+            std::string file_name = path.stem().string();
+
+            int status = extension == ".wav" ? 1 : extension == ".flac" ? 2 : extension == ".mp3" ? 3 : 0;
+            std::string file = file_path;
+            
+            std::string file = path.string();
+            bool success = false;
+            switch(status)
+            {
+            case 0:
+            {
+                return;
+            }
+            break;
+            case 1:
+                success = load_wav_file(file, samples,&c, &s);
+                break;
+            case 2:
+                success = load_flac_file(file, samples,&c, &s);
+                break;
+            case 3:
+                success = load_mp3_file(file, samples,&c, &s);
+            }
+
+        if ( success )
+        {
+            channels.store(c);
+            sample_rate.store(s);
+        }
+
+        file_loaded.store( success == true );
+        playback.store( success == true );
+
+        }).detach();
+
+    };
+
+bool ImGuiStopButton(const char* str_id, ImVec2 size) {
+    ImGuiContext& g = *GImGui;
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems) return false;
+
+
+    const ImGuiID id = window->GetID(str_id);
+    const ImRect bb(window->DC.CursorPos, {window->DC.CursorPos[0] + size[0],window->DC.CursorPos[1] + size[1]} );
+    
+    ImGui::ItemSize(size, g.Style.FramePadding.y);
+    if (!ImGui::ItemAdd(bb, id)) return false;
+
+    bool hovered, held;
+    bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
+
+
+    ImU32 bg_col = ImGui::GetColorU32((held && hovered) ? ImGuiCol_ButtonActive : hovered ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
+    ImU32 icon_col = ImGui::GetColorU32(ImGuiCol_Text);
+
+    window->DrawList->AddRectFilled(bb.Min, bb.Max, bg_col, g.Style.FrameRounding);
+
+
+    float padding = size.y * 0.25f; // Marges internes pour que l'icône ne colle pas aux bords
+    ImVec2 stop_min(bb.Min.x + padding, bb.Min.y + padding);
+    ImVec2 stop_max(bb.Max.x - padding, bb.Max.y - padding);
+
+
+    window->DrawList->AddRectFilled(stop_min, stop_max, icon_col);
+
+    return pressed;
+}
+
 int main(int argc, char* argv[]) 
 {
 
@@ -570,21 +712,16 @@ int main(int argc, char* argv[])
 
     std::vector<float> samples;
 
+    std::string f = "/home/descourt/Bureau/epic-synthwave-mixtape-for-men-with-balls-of-steel-vol-1.wav"; //R3-099 - A.wav"; //FifeAndDrumsStereo.wav"; // R3-099 - A.wav";
 
-
-    std::string f = ""; 
+    //f = "/home/descourt/Téléchargements/Procedentem sponsum.wav"; //Recordare virgo mater [TubeRipper.cc].flac";
 
     //    size_t channels = 0; 
    // double sample_rate = 44100;
-   // ma_read_from_wav_file(f.c_str(),&samples,&channels,&sample_rate);
-
-    uint channels = 2; 
-    uint sample_rate = 44100;
-    //load_wav_file(f, &samples,&channels,&sample_rate);
 
     size_t samples_cursor = 0, next_cursor = 0;
 
-    alignas(64) std::atomic<bool> stop_playback = false;
+
 
       /*
     std::thread playback = std::thread([&,channels,sample_rate](spectrogram_renderer *spectrogram)->void
@@ -598,7 +735,7 @@ int main(int argc, char* argv[])
         // SDL_OpenAudioDeviceStream starts the device paused. You have to tell it to start! 
         SDL_ResumeAudioStreamDevice(stream);
 
-        while ( stop_playback.load() != true && samples_cursor < samples.size() )
+        while ( stop_playback_requested.load() != true && samples_cursor < samples.size() )
         {
             if (SDL_GetAudioStreamQueued(stream) < minimum_audio)
             {
@@ -665,13 +802,6 @@ int main(int argc, char* argv[])
         SDL_AudioStream* capture_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, &spec, NULL,NULL);
        
         const int minimum_audio = ( sample_rate * sizeof(float) ) / 2;  //  Half of samples per seconds 
-        // SDL_OpenAudioDeviceStream starts the device paused. You have to tell it to start! 
-        SDL_ResumeAudioStreamDevice(playback_stream);
-
-        SDL_ResumeAudioStreamDevice(capture_stream);
-
-        bool stop_playback_requested = false;
-
 
         // 1. Liste des options disponibles pour l'analyseur
         const char* fft_visualizer_style[] = { 
@@ -681,11 +811,15 @@ int main(int argc, char* argv[])
         };
 
     // Index de l'élément actuellement sélectionné (à déclarer en variable persistante/globale)
-    static int current_window_idx = 1; // "Hann" par défaut
+    static int current_window_idx = 1; 
 
     // Libellé affiché à l'écran basé sur l'élément sélectionné
     const char* combo_preview_value = fft_visualizer_style[current_window_idx];
     float gain = std::pow(10.f,0.f/20.f);
+
+    bool selected_visualizer = false;
+
+        alignas(64) std::atomic<bool> close_dialog = false;
 
     while (running ) 
     {
@@ -703,8 +837,7 @@ int main(int argc, char* argv[])
                 //if (closed_id == SDL_GetWindowID(window_ui)) {
                 //    SDL_HideWindow(window_ui); // Masquer simplement l'UI si on clique sur sa croix
                // }
-                 
-                stop_playback.store(true);
+
             }
         }
 
@@ -729,25 +862,34 @@ int main(int argc, char* argv[])
         // Section Configuration
         ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "sprectum visualizer");
         ImGui::Separator();
-            if (ImGui::BeginCombo("analyzer style", combo_preview_value)) 
+        if (ImGui::BeginCombo("analyzer style", combo_preview_value)) 
+        {
+            for (int n = 0; n < IM_ARRAYSIZE(fft_visualizer_style); n++) 
             {
-                for (int n = 0; n < IM_ARRAYSIZE(fft_visualizer_style); n++) 
+                selected_visualizer = (current_window_idx == n);
+                
+                // Affichage de chaque option dans la liste déroulante
+                if (ImGui::Selectable(fft_visualizer_style[n], selected_visualizer)) 
                 {
-                    const bool is_selected = (current_window_idx == n);
-                    
-                    // Affichage de chaque option dans la liste déroulante
-                    if (ImGui::Selectable(fft_visualizer_style[n], is_selected)) {
-                        current_window_idx = n; // Met à jour l'index sélectionné
-                        
+                    current_window_idx = n; // Met à jour l'index sélectionné
+                    if ( current_window_idx == 3)
+                    {
+                        SDL_ResumeAudioStreamDevice(capture_stream);
+                        if (SDL_AudioStreamDevicePaused(playback_stream)) 
+                        {
+                            SDL_ResumeAudioStreamDevice(playback_stream);
+                        }
                     }
 
                     // Définir le focus initial sur l'élément sélectionné
-                    if (is_selected) {
+                    if (selected_visualizer) 
+                    {
                         ImGui::SetItemDefaultFocus();
                     }
                 }
-               ImGui::EndCombo();  
+                ImGui::EndCombo();  
             }
+        }
         ImGui::Separator();
         ImGui::Spacing();
         ImGui::Separator();
@@ -755,56 +897,95 @@ int main(int argc, char* argv[])
         ImGui::Separator();
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::Text("Fichier source :");
-        ImGui::TextUnformatted(selected_file_path.c_str());
-
-        // 2. Bouton pour ouvrir l'explorateur
-        if (ImGui::Button("Ouvrir un fichier audio...")) {
-            // Configurer le titre et les extensions autorisées
-            fileDialog.SetTitle("Choisir un fichier audio (.wav, .flac, .mp3)");
-            fileDialog.SetTypeFilters({ ".wav", ".mp3", ".flac" });
-            
-            // Ouvrir la boîte de dialogue
-            fileDialog.Open();
-        }
-
-        // 4. Vérifier si l'utilisateur a validé ou fermé la boîte de dialogue
-        if (fileDialog.HasSelected()) {
-            // Récupérer le chemin absolu du fichier sélectionné
-            selected_file_path = fileDialog.GetSelected().string();
-            
-            // --- APPLIQUER VOTRE LOGIQUE ICI ---
-            // Exemple : charger_fichier_audio(selected_file_path);
-            
-            fileDialog.ClearSelected(); // Réinitialiser le dialogue
-        }
-
-        if (fileDialog.IsOpened()) 
+        
+        // if capture to playback not selected
+        if (current_window_idx != 3)
         {
-            ImGui::SameLine();
-            if (ImGui::Button("close")) 
+            ImGui::Text("choose audio file :");
+            ImGui::TextUnformatted(selected_file_path.c_str());
+            // 2. Bouton pour ouvrir l'explorateur
+            if (ImGui::Button("open audio file...")) {
+                // Configurer le titre et les extensions autorisées
+                fileDialog.SetTitle("Choisir un fichier audio (.wav, .flac, .mp3)");
+                fileDialog.SetTypeFilters({ ".wav", ".mp3", ".flac" });
+                
+                // Ouvrir la boîte de dialogue
+                fileDialog.Open();
+            }
+
+            // 4. Vérifier si l'utilisateur a validé ou fermé la boîte de dialogue
+            if (fileDialog.HasSelected()) {
+
+                // Récupérer le chemin absolu du fichier sélectionné
+                selected_file_path = fileDialog.GetSelected().string();
+                
+                if ( !selected_file_path.empty() )
+                {
+                    // --- APPLIQUER VOTRE LOGIQUE ICI ---
+                    // Exemple : charger_fichier_audio(selected_file_path);
+                    file_loaded.store(false);
+                    std::thread( [](std::string file, std::vector<float> *samples, SDL_AudioStream* playback_stream )
+                    {
+                        load_audio_file(file.c_str(),samples);
+                        if (SDL_AudioStreamDevicePaused(playback_stream)) 
+                        {
+                            SDL_ResumeAudioStreamDevice(playback_stream);
+                        }
+                    },
+                    selected_file_path,&samples,playback_stream).detach();
+                }
+                close_dialog.store(true);
+                fileDialog.ClearSelected(); // Réinitialiser le dialogue
+            
+            }
+            if (close_dialog.load() )
             {
                 fileDialog.Close();
+                close_dialog.store(false);
             }
-            // Récupérer la taille actuelle de votre fenêtre SDL d'interface (window_ui)
-            int ui_w, ui_h;
-            SDL_GetWindowSize(window_ui, &ui_w, &ui_h);
-            
-            // On force la fenêtre de l'explorateur à être légèrement plus petite 
-            // que la fenêtre système pour que la croix 'X' reste accessible.
-            ImGui::SetNextWindowSize(ImVec2((float)ui_w - 40.0f, (float)ui_h - 60.0f));
-            ImGui::SetNextWindowPos(ImVec2(20.0f, 40.0f));
-        }
 
-        fileDialog.Display();
-           
+            if (fileDialog.IsOpened()) 
+            {
+                ImGui::SameLine();
+                if (ImGui::Button("close")) 
+                {
+                    fileDialog.Close();
+                }
+                // Récupérer la taille actuelle de votre fenêtre SDL d'interface (window_ui)
+                int ui_w, ui_h;
+                SDL_GetWindowSize(window_ui, &ui_w, &ui_h);
+                
+                // On force la fenêtre de l'explorateur à être légèrement plus petite 
+                // que la fenêtre système pour que la croix 'X' reste accessible.
+                ImGui::SetNextWindowSize(ImVec2((float)ui_w - 40.0f, (float)ui_h - 60.0f));
+                ImGui::SetNextWindowPos(ImVec2(20.0f, 40.0f));
+            }
+
+            fileDialog.Display();
+        }
+        if ( file_loaded.load() == true)
+        {
+            if (ImGuiStopButton("##AudioStop", ImVec2(32.0f, 32.0f))) 
+            {
+                
+                SDL_PauseAudioStreamDevice(playback_stream);
+                SDL_ClearAudioStream(playback_stream); 
+                file_loaded.store(false);
+                playback.store(false);
+            }
+
+            
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("stop playback");
+            }
+        }
         ImGui::End();
 
         // 3. Rendu de la scène
         ImGui::Render(); // Calcule les géométries d'ImGui
 
     
-        process_spectrum_capture_to_playback(stop_playback_requested,renderer, playback_stream,capture_stream,&buffer);
+        process_spectrum_capture_to_playback(playback,renderer, playback_stream,capture_stream,&buffer);
 
 
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer_ui);  
