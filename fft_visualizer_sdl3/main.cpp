@@ -389,7 +389,7 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
     constexpr float norm = 1.f/10.f;
     inline void process_spectrum_play_back(size_t paneHeight,size_t& next_cursor,int minimum_audio, size_t &samples_cursor, SDL_AudioStream* stream,SDL_Renderer *renderer, std::vector<float> *samples,std::vector<float> *buffer)
     {
-            if (SDL_GetAudioStreamQueued(stream) < minimum_audio)
+            if (playback.load() == true && SDL_GetAudioStreamQueued(stream) < minimum_audio)
             {
                 // this will feed 1024 samples each frame until we get to our maximum. 
                 // generate samples from grooves 
@@ -469,12 +469,12 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
     size_t last_audio_cursor_stream = 0;
     size_t audio_cursor_stream = 0;
     std::vector<float> tmp_buffer(4 * FFT_SIZE);
-    inline void process_spectrum_capture_to_playback(bool stop_requested,SDL_Renderer* renderer, SDL_AudioStream* playback_stream , SDL_AudioStream* capture_stream, std::vector<float> *buffer)
+    inline void process_spectrum_capture_to_playback(SDL_Renderer* renderer, SDL_AudioStream* playback_stream , SDL_AudioStream* capture_stream, std::vector<float> *buffer)
     {
 
             int buffer_size = SDL_GetAudioStreamAvailable( capture_stream );  // number of bytes the stream has accumulated so far.
             
-            if ( buffer_size > 0 && !stop_requested )
+            if ( playback.load() == true && buffer_size > 0)
             {
                 std::vector<float> buff(buffer_size);
                 size_t frame_size_in_bytes = sizeof(float) * 2;
@@ -556,7 +556,7 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
     alignas(64) std::atomic<bool> file_loaded = false;
 
 
-    static bool load_audio_file(const char* file_path, std::vector<float> *samples)
+    static void load_audio_file(const char* file_path, std::vector<float> *samples)
     {
         file_loaded.store(false);
         std::thread ([](const char* file_path,std::vector<float> *samples){
@@ -592,17 +592,14 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                 success = load_mp3_file(file, samples,&c, &s);
             }
 
-        if ( success )
-        {
-            channels.store(c);
-            sample_rate.store(s);
-        }
-
-        file_loaded.store( success == true );
-        playback.store( success == true );
+            if ( success )
+            {
+                channels.store(c);
+                sample_rate.store(s);
+                file_loaded.store(true );
+            }
 
         }, file_path, samples).detach();
-
     };
 
 bool ImGuiStopButton(const char* str_id, ImVec2 size) {
@@ -637,6 +634,28 @@ bool ImGuiStopButton(const char* str_id, ImVec2 size) {
     return pressed;
 }
 
+bool ImGuiPlayButton(const char* label_id, ImVec2 size) {
+
+    bool pressed = ImGui::Button(label_id, size);
+
+    ImVec2 pos_min = ImGui::GetItemRectMin();
+    ImVec2 pos_max = ImGui::GetItemRectMax();
+
+    float padding_x = size.x * 0.25f;
+    float padding_y = size.y * 0.25f;
+
+    ImVec2 p1(pos_min.x + padding_x, pos_min.y + padding_y);           // Sommet haut-gauche
+    ImVec2 p2(pos_min.x + padding_x, pos_max.y - padding_y);           // Sommet bas-gauche
+    ImVec2 p3(pos_max.x - padding_x, pos_min.y + (size.y * 0.5f));     // Sommet pointe droite
+
+    ImU32 icon_col = ImGui::GetColorU32(ImGuiCol_Text);
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    draw_list->AddTriangleFilled(p1, p2, p3, icon_col);
+
+    return pressed;
+}
+
 int main(int argc, char* argv[]) 
 {
 
@@ -645,8 +664,6 @@ int main(int argc, char* argv[])
         return -1;
     }
 
-
-   
     SDL_Window* window = SDL_CreateWindow("Spectrogramme 2D - SDL3", WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_RESIZABLE);
     
     if (!window) {
@@ -796,7 +813,7 @@ int main(int argc, char* argv[])
 
 
             // Configuration Audio SDL3 (Mono, 48kHz)
-        SDL_AudioSpec spec{ SDL_AUDIO_F32, channels, sample_rate };
+        SDL_AudioSpec spec{ SDL_AUDIO_F32, channels.load(), sample_rate.load() };
         SDL_AudioStream* playback_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL,NULL);
 
         SDL_AudioStream* capture_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, &spec, NULL,NULL);
@@ -811,7 +828,7 @@ int main(int argc, char* argv[])
         };
 
     // Index de l'élément actuellement sélectionné (à déclarer en variable persistante/globale)
-    static int current_window_idx = 1; 
+    static int current_window_idx = 2; 
 
     // Libellé affiché à l'écran basé sur l'élément sélectionné
     const char* combo_preview_value = fft_visualizer_style[current_window_idx];
@@ -841,8 +858,19 @@ int main(int argc, char* argv[])
             }
         }
 
-      //  process_spectrum_play_back(paneHeight,next_cursor,minimum_audio, samples_cursor, stream,renderer, &samples,&buffer);
-      
+        switch(current_window_idx)
+        {
+            case 0:
+            process_spectrum_play_back(paneHeight,next_cursor,minimum_audio, samples_cursor, playback_stream,renderer, &samples,&buffer);
+            break;
+            case 1:
+            break;
+            case 2:
+            process_spectrum_capture_to_playback(renderer, playback_stream,capture_stream,&buffer);
+            break;
+        }
+
+        SDL_RenderPresent(renderer);
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
@@ -862,34 +890,8 @@ int main(int argc, char* argv[])
         // Section Configuration
         ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "sprectum visualizer");
         ImGui::Separator();
-        if (ImGui::BeginCombo("analyzer style", combo_preview_value)) 
-        {
-            for (int n = 0; n < IM_ARRAYSIZE(fft_visualizer_style); n++) 
-            {
-                selected_visualizer = (current_window_idx == n);
-                
-                // Affichage de chaque option dans la liste déroulante
-                if (ImGui::Selectable(fft_visualizer_style[n], selected_visualizer)) 
-                {
-                    current_window_idx = n; // Met à jour l'index sélectionné
-                    if ( current_window_idx == 3)
-                    {
-                        SDL_ResumeAudioStreamDevice(capture_stream);
-                        if (SDL_AudioStreamDevicePaused(playback_stream)) 
-                        {
-                            SDL_ResumeAudioStreamDevice(playback_stream);
-                        }
-                    }
 
-                    // Définir le focus initial sur l'élément sélectionné
-                    if (selected_visualizer) 
-                    {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();  
-            }
-        }
+        ImGui::Combo("spectrum visualizer", &current_window_idx, fft_visualizer_style, IM_ARRAYSIZE(fft_visualizer_style));
         ImGui::Separator();
         ImGui::Spacing();
         ImGui::Separator();
@@ -899,7 +901,7 @@ int main(int argc, char* argv[])
         ImGui::Separator();
         
         // if capture to playback not selected
-        if (current_window_idx != 3)
+        if (current_window_idx != 2)
         {
             ImGui::Text("choose audio file :");
             ImGui::TextUnformatted(selected_file_path.c_str());
@@ -963,14 +965,32 @@ int main(int argc, char* argv[])
 
             fileDialog.Display();
         }
-        if ( file_loaded.load() == true)
+        if ( file_loaded.load() == true || current_window_idx == 2)
         {
+            // Bouton Play
+            if (ImGuiPlayButton("##PlayBtn", ImVec2(32.0f, 32.0f))) 
+            {
+                SDL_ResumeAudioStreamDevice(playback_stream);
+                if ( current_window_idx == 2)
+                {
+                    SDL_ResumeAudioStreamDevice(capture_stream);
+                }
+                playback.store(true);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lancer la lecture");
+
+            ImGui::SameLine(); 
+
             if (ImGuiStopButton("##AudioStop", ImVec2(32.0f, 32.0f))) 
             {
                 
                 SDL_PauseAudioStreamDevice(playback_stream);
                 SDL_ClearAudioStream(playback_stream); 
-                file_loaded.store(false);
+                if ( current_window_idx == 2)
+                {
+                    SDL_PauseAudioStreamDevice(capture_stream);
+                    SDL_ClearAudioStream(capture_stream); 
+                }
                 playback.store(false);
             }
 
@@ -984,13 +1004,7 @@ int main(int argc, char* argv[])
         // 3. Rendu de la scène
         ImGui::Render(); // Calcule les géométries d'ImGui
 
-    
-        process_spectrum_capture_to_playback(playback,renderer, playback_stream,capture_stream,&buffer);
-
-
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer_ui);  
-
-        SDL_RenderPresent(renderer);
 
         SDL_SetRenderDrawColor(renderer_ui, 45, 45, 45, 255);  // Fond gris moyen
         SDL_RenderClear(renderer_ui);
