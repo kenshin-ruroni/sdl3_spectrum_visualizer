@@ -558,22 +558,23 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
 
     static void load_audio_file(const char* file_path, std::vector<float> *samples)
     {
-        file_loaded.store(false);
-        std::thread ([](const char* file_path,std::vector<float> *samples){
+
+        std::string path = file_path;
+
+        std::thread ([](std::string file,std::vector<float> *samples){
 
             auto start = std::chrono::high_resolution_clock::now();
             
             uint c = 2;
             uint s = 44100;
 
-            auto path = std::filesystem::path(file_path);
+            auto path = std::filesystem::path(file);
             std::string extension = path.extension().string();
             std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
             std::string file_name = path.stem().string();
 
             int status = extension == ".wav" ? 1 : extension == ".flac" ? 2 : extension == ".mp3" ? 3 : 0;
-            std::string file = file_path;
-            
+
             bool success = false;
             switch(status)
             {
@@ -599,7 +600,7 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                 file_loaded.store(true );
             }
 
-        }, file_path, samples).detach();
+        }, path, samples).detach();
     };
 
 bool ImGuiStopButton(const char* str_id, ImVec2 size) {
@@ -915,17 +916,14 @@ int main(int argc, char* argv[])
                 fileDialog.Open();
             }
 
-            // 4. Vérifier si l'utilisateur a validé ou fermé la boîte de dialogue
             if (fileDialog.HasSelected()) {
 
-                // Récupérer le chemin absolu du fichier sélectionné
+
                 selected_file_path = fileDialog.GetSelected().string();
                 
                 if ( !selected_file_path.empty() )
                 {
-                    // --- APPLIQUER VOTRE LOGIQUE ICI ---
-                    // Exemple : charger_fichier_audio(selected_file_path);
-                    file_loaded.store(false);
+
                     std::thread( [](std::string file, std::vector<float> *samples, SDL_AudioStream* playback_stream )
                     {
                         load_audio_file(file.c_str(),samples);
@@ -968,8 +966,12 @@ int main(int argc, char* argv[])
         if ( file_loaded.load() == true || current_window_idx == 2)
         {
             // Bouton Play
-            if (ImGuiPlayButton("##PlayBtn", ImVec2(32.0f, 32.0f))) 
+            if (playback.load() == false && ImGuiPlayButton("##PlayBtn", ImVec2(32.0f, 32.0f))) 
             {
+                last_audio_cursor_stream = 0;
+                audio_cursor_stream = 0;
+                samples_cursor = 0;
+                next_cursor = 0;
                 SDL_ResumeAudioStreamDevice(playback_stream);
                 if ( current_window_idx == 2)
                 {
@@ -983,7 +985,10 @@ int main(int argc, char* argv[])
 
             if (ImGuiStopButton("##AudioStop", ImVec2(32.0f, 32.0f))) 
             {
-                
+                last_audio_cursor_stream = 0;
+                audio_cursor_stream = 0;
+                samples_cursor = 0;
+                next_cursor = 0;
                 SDL_PauseAudioStreamDevice(playback_stream);
                 SDL_ClearAudioStream(playback_stream); 
                 if ( current_window_idx == 2)
