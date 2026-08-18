@@ -5,9 +5,9 @@
 #include <algorithm>
 #include <cstring>
 
-constexpr uint32_t FFT_SIZE = 4096;
+constexpr uint32_t FFT_SIZE = 1024;
 constexpr  uint32_t WINDOW_WIDTH = 800;
-constexpr  uint32_t WINDOW_HEIGHT = 512;
+constexpr  uint32_t WINDOW_HEIGHT = 400;
 
 
 
@@ -54,8 +54,6 @@ public:
             
             m_pixelBuffer[y * WINDOW_WIDTH + (WINDOW_WIDTH - 1)] = rgbaColor;
         }
-
-        // 3. Mettre à jour la texture GPU avec notre buffer de pixels local
         
     }
     // Tampons pour la FFT courante

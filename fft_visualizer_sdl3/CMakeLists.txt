@@ -2,12 +2,32 @@
 
   cmake_minimum_required(VERSION 3.30)
 
-
 project(fft_visualizer VERSION 0.1 LANGUAGES C CXX)
 
-set(CMAKE_AUTOUIC ON)
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
+include(FetchContent)
+
+message(STATUS "Téléchargement de Dear ImGui depuis GitHub...")
+
+FetchContent_Declare(
+    imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG        master # Recommandé: branche 'docking' ou 'master' selon vos besoins
+)
+FetchContent_MakeAvailable(imgui)
+
+set(imgui_SOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src")
+
+set(IMGUI_SOURCES
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_demo.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    # Backends requis pour faire le pont avec SDL3 et SDL_Renderer
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer3.cpp
+)
+
 
 if (MSVC)
     set(CMAKE_CXX_STANDARD 23)
@@ -30,6 +50,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 
 set(PROJECT_SOURCES
+
         main.cpp
         miniaudio.c
         spectrogram_renderer.h
@@ -39,7 +60,7 @@ set(PROJECT_SOURCES
         dr_libs/dr_wav.h
 )
 
-add_executable(${PROJECT_NAME} main.cpp )
+add_executable(${PROJECT_NAME} main.cpp ${IMGUI_SOURCES} )
 
 if (MSVC)
 
@@ -54,7 +75,7 @@ endif()
 if(LINUX)
 
         add_compile_options(-msse2 -lpthread -lm -march=native -mfma  )
-        target_include_directories(${PROJECT_NAME} PUBLIC  /usr/local/include )  
+        target_include_directories(${PROJECT_NAME} PUBLIC  /usr/local/include ./build/_deps/imgui-src )  
         target_link_directories(${PROJECT_NAME} PUBLIC . )
         target_link_libraries( ${PROJECT_NAME} PRIVATE  ${CMAKE_SOURCE_DIR}/libSDL3.a ) # SDL3
 

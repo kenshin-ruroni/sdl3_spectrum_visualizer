@@ -212,17 +212,303 @@ inline void load_wav_file(std::string &path,std::vector<float> *interleaved_samp
 
         }
 
-int main(int argc, char* argv[]) {
+    // Tampons pour la FFT courante
+    std::vector<float> currentLeft = std::vector<float>(FFT_SIZE, 0.0f);
+    std::vector<float> currentRight = std::vector<float>(FFT_SIZE, 0.0f);
+    std::vector<std::complex<float>> fftLeft = std::vector<std::complex<float>>(FFT_SIZE); std::vector<std::complex<float>> fftRight = std::vector<std::complex<float>>(FFT_SIZE);
+
+    size_t paneHeight = WINDOW_HEIGHT / 2;
+
+    // Fonction FFT Cooley-Tukey (identique)
+inline void fft(std::vector<std::complex<float>>* a) {
+    int n = a->size();
+    if (n <= 1) return;
+    std::vector<std::complex<float>> a0(n / 2), a1(n / 2);
+    for (int i = 0; 2 * i < n; i++) {
+        a0[i] = (*a)[2 * i];
+        a1[i] = (*a)[2 * i + 1];
+    }
+    fft(&a0); fft(&a1);
+    float angle = 2 * M_PI / n;
+    std::complex<float> w(1), wn(std::cos(angle), -std::sin(angle));
+    for (int i = 0; 2 * i < n; i++) {
+        (*a)[i] = a0[i] + w * a1[i];
+        (*a)[i + n / 2] = a0[i] - w * a1[i];
+        w *= wn;
+    }
+}
+
+constexpr float threshold = 2.5;
+
+
+std::vector<uint32_t> pixelBuffer;
+    // Ajoute une nouvelle colonne de fréquences calculées et décale le reste de l'image
+    void addFFTFrame(const std::vector<float> *magnitudes) {
+        // 1. Décaler tous les pixels de la texture d'un pixel vers la gauche
+        for (int y = 0; y < WINDOW_HEIGHT; ++y) {
+            std::memmove(&pixelBuffer[y * WINDOW_WIDTH], &pixelBuffer[y * WINDOW_WIDTH + 1], (WINDOW_WIDTH - 1) * sizeof(uint32_t));
+        }
+
+        // 2. Dessiner la nouvelle colonne tout à droite (X = WINDOW_WIDTH - 1)
+        // L'axe Y représente les fréquences (Basses en bas, Hautes en haut)
+        for (int y = 0; y < WINDOW_HEIGHT; ++y) {
+            // Mapper la hauteur de l'écran sur la moitié utile de la FFT (frequences positives)
+            uint32_t fftBin = (WINDOW_HEIGHT - 1 - y) * (FFT_SIZE / 2) / WINDOW_HEIGHT;
+
+            size_t index = std::clamp(fftBin, (uint32_t)0, FFT_SIZE / 2 - 1);
+            float mag = (*magnitudes)[index];
+
+            // Normalisation de l'intensité lumineuse (application d'une échelle logarithmique)
+            float intensity = std::clamp(20.0f * std::log10(mag + 1.0f) * 10.0f, 0.0f, 255.0f);
+            uint8_t colorVal = static_cast<uint8_t>(intensity);
+
+            // Génération d'une palette de couleur (Ex: Dégradé de Vert)
+            uint32_t rgbaColor = (0x00 << 24) | (colorVal << 16) | (0x00 << 8) | 0xFF; // RGBA
+            
+            pixelBuffer[y * WINDOW_WIDTH + (WINDOW_WIDTH - 1)] = rgbaColor;
+        }
+        
+    }
+
+
+        std::vector<float> buffer(2 * FFT_SIZE);  
+
+std::vector<std::complex<float>> fftData(FFT_SIZE);
+std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f);
+    inline void process_spectrogram(size_t next_cursor,size_t samples_cursor,int minimum_audio,std::vector<float> *samples,int pitch, SDL_AudioStream* stream,SDL_Renderer *renderer,SDL_Texture*  texture ,float *buffer)
+    {
+
+        if (SDL_GetAudioStreamQueued(stream) < minimum_audio)
+            {
+                // this will feed 1024 samples each frame until we get to our maximum. 
+                // generate samples from grooves 
+                next_cursor = std::min(samples->size() - 1, samples_cursor + SDL_arraysize(buffer)) ;
+                memcpy(buffer, (const void *)(samples->data()+samples_cursor), (next_cursor - samples_cursor) * sizeof(float) );
+
+                // feed the new data to the stream. It will queue at the end, and trickle out as the hardware needs more data. 
+                SDL_PutAudioStreamData(stream, buffer, (next_cursor - samples_cursor) * sizeof(float) );
+                samples_cursor = next_cursor;
+                if ( samples_cursor >= samples->size() - 1 )
+                {
+                    return;
+                }
+
+            int samplesNeeded = SDL_arraysize(buffer);
+                if (samplesNeeded >= FFT_SIZE) 
+                { 
+
+// Récupérer les données du flux
+                    // Préparer les données pour la FFT complexe
+                    
+                    for (int i = 0; i < FFT_SIZE; ++i) 
+                    {
+                        // Optionnel mais recommandé : appliquer une fenêtre de Hamming ici pour éviter le "spectral leakage"
+                        fftData[i] = std::complex<float>(buffer[i], 0.0f);
+                    }
+                    fft(&fftData);
+                    // Extraction des amplitudes de la moitié positive du spectre
+
+                    for (int i = 0; i < FFT_SIZE / 2; ++i) {
+                        spectrogram_magnitudes[i] = std::abs(fftData[i]);
+                    }
+
+                    addFFTFrame(&spectrogram_magnitudes);
+
+                    // Rendu graphique
+                    SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
+                    SDL_RenderClear(renderer);
+                    SDL_UpdateTexture(texture,nullptr,pixelBuffer.data(),pitch);
+                    SDL_RenderTexture(renderer, texture, nullptr, nullptr);
+                    SDL_RenderPresent(renderer);
+                }
+            }
+        }
+
+        constexpr float norm = 1.f/10.f;
+    inline void process_spectrum_play_back(size_t paneHeight,size_t& next_cursor,int minimum_audio, size_t &samples_cursor, SDL_AudioStream* stream,SDL_Renderer *renderer, std::vector<float> *samples,std::vector<float> *buffer)
+    {
+            if (SDL_GetAudioStreamQueued(stream) < minimum_audio)
+            {
+                // this will feed 1024 samples each frame until we get to our maximum. 
+                // generate samples from grooves 
+                next_cursor = std::min(samples->size() - 1, samples_cursor + buffer->size() ) ;
+                memcpy(buffer->data(), (const void *)(samples->data()+samples_cursor), (next_cursor - samples_cursor) * sizeof(float) );
+
+                // feed the new data to the stream. It will queue at the end, and trickle out as the hardware needs more data. 
+                SDL_PutAudioStreamData(stream, buffer->data(), (next_cursor - samples_cursor) * sizeof(float) );
+                samples_cursor = next_cursor;
+                if ( samples_cursor >= samples->size() - 1 )
+                {
+                    return;
+                }
+
+            int samplesNeeded = buffer->size();
+                if (samplesNeeded >= FFT_SIZE) 
+                { 
+        // Rendu graphique
+                    SDL_SetRenderDrawColor(renderer, 10, 10, 10, 255);
+                    SDL_RenderClear(renderer);
+
+                    for (size_t  i = 0; i < FFT_SIZE; ++i) 
+                    {
+                        currentLeft[i] = (*buffer)[i * 2];
+                        currentRight[i] = (*buffer)[i * 2 + 1];
+                    }
+
+                    for (int i = 0; i < FFT_SIZE; ++i) {
+                        float windowMultiplier = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (FFT_SIZE - 1)));
+                        fftLeft[i] = std::complex<float>(currentLeft[i] * windowMultiplier, 0.0f);
+                        fftRight[i] = std::complex<float>(currentRight[i] * windowMultiplier, 0.0f);
+                    }
+                    fft(&fftLeft);
+                    fft(&fftRight);
+
+                    int usableBins = FFT_SIZE /2; // Fréquences utiles uniques
+                    float barWidth = static_cast<float>(WINDOW_WIDTH) / usableBins;
+                    for (int i = 0; i < usableBins; ++i) {
+                        // Calcul de l'amplitude (mise à l'échelle logarithmique visuelle)
+                        float magLeft = std::abs(fftLeft[i]) / std::sqrt(FFT_SIZE);
+                        float magRight = std::abs(fftRight[i]) / std::sqrt(FFT_SIZE);
+
+                        float normLeft = std::clamp(std::log1p(magLeft * 20.0f) *norm, 0.0f, 1.0f);
+                        float normRight = std::clamp(std::log1p(magRight * 20.0f) *norm , 0.0f, 1.0f);
+
+                        int x = static_cast<int>(i * barWidth);
+                        int w = std::max(1, static_cast<int>(barWidth));
+
+                        // --- Canal Gauche (Panneau du haut) ---
+                        int hLeft =  static_cast<int>(normLeft * (paneHeight - 20));
+                        SDL_FRect rectLeft{ (float)x, (float)(paneHeight - hLeft), (float)w, (float)hLeft };
+
+                        uint8_t r = static_cast<uint8_t>(threshold * normLeft * 255.);
+                        uint8_t g = static_cast<uint8_t>((1. - threshold * normLeft) * 255.);
+                        SDL_SetRenderDrawColor(renderer, r, 0, g, 255); // Cyan
+                        SDL_RenderFillRect(renderer, &rectLeft);
+
+                        // --- Canal Droit (Panneau du bas) ---
+                        int hRight =  static_cast<int>(normRight * (paneHeight - 20));
+                        r = static_cast<uint8_t>(threshold * normRight * 255.);
+                        g = static_cast<uint8_t>((1. - threshold * normRight) * 255.);
+                        SDL_FRect rectRight{ (float)x, (float)(paneHeight ), (float)w, (float)hRight };
+                        SDL_SetRenderDrawColor(renderer, r,0,g, 255); // Magenta
+                        SDL_RenderFillRect(renderer, &rectRight);
+                    }
+
+                    // Ligne de séparation médiane
+                    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
+                    SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
+
+                    SDL_RenderPresent(renderer);
+
+                }
+
+        }
+    }
+
+    size_t last_audio_cursor_stream = 0;
+    size_t audio_cursor_stream = 0;
+    std::vector<float> tmp_buffer(4 * FFT_SIZE);
+    inline void process_spectrum_capture_to_playback(bool stop_requested,SDL_Renderer* renderer, SDL_AudioStream* playback_stream , SDL_AudioStream* capture_stream, std::vector<float> *buffer)
+    {
+
+            size_t buffer_size = SDL_GetAudioStreamAvailable( capture_stream );  // number of bytes the stream has accumulated so far.
+            std::vector<float> buff(buffer_size);
+            if ( buffer_size > 0 && !stop_requested )
+            {
+                size_t frame_size_in_bytes = sizeof(float) * 2;
+                std::vector<float> buff(buffer_size);
+                SDL_GetAudioStreamData(capture_stream,buff.data(),buffer_size);
+
+                last_audio_cursor_stream = audio_cursor_stream;
+                audio_cursor_stream = std::min( audio_cursor_stream + buffer_size, buffer->size()  - 1);
+
+               memcpy(buffer->data() + last_audio_cursor_stream, buff.data(), (audio_cursor_stream-last_audio_cursor_stream) *sizeof(float) );
+               
+                int samplesbuffered = audio_cursor_stream;
+                if (samplesbuffered == buffer->size()  - 1) 
+                { 
+
+                    audio_cursor_stream  %= buffer->size()  - 1;
+        // Rendu graphique
+                    SDL_SetRenderDrawColor(renderer, 10, 10, 10, 255);
+                    SDL_RenderClear(renderer);
+
+                    for (size_t  i = 0; i < FFT_SIZE; ++i) 
+                    {
+                        currentLeft[i] = (*buffer)[i * 2];
+                        currentRight[i] = (*buffer)[i * 2 + 1];
+                    }
+
+                    for (int i = 0; i < FFT_SIZE; ++i) {
+                        float windowMultiplier = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (FFT_SIZE - 1)));
+                        fftLeft[i] = std::complex<float>(currentLeft[i] * windowMultiplier, 0.0f);
+                        fftRight[i] = std::complex<float>(currentRight[i] * windowMultiplier, 0.0f);
+                    }
+                    fft(&fftLeft);
+                    fft(&fftRight);
+
+                    int usableBins = FFT_SIZE /2; // Fréquences utiles uniques
+                    float barWidth = static_cast<float>(WINDOW_WIDTH) / usableBins;
+                    for (int i = 0; i < usableBins; ++i) {
+                        // Calcul de l'amplitude (mise à l'échelle logarithmique visuelle)
+                        float magLeft = std::abs(fftLeft[i]) / std::sqrt(FFT_SIZE);
+                        float magRight = std::abs(fftRight[i]) / std::sqrt(FFT_SIZE);
+
+                        float normLeft = std::clamp(std::log1p(magLeft * 20.0f) *norm, 0.0f, 1.0f);
+                        float normRight = std::clamp(std::log1p(magRight * 20.0f) *norm , 0.0f, 1.0f);
+
+                        int x = static_cast<int>(i * barWidth);
+                        int w = std::max(1, static_cast<int>(barWidth));
+
+                        // --- Canal Gauche (Panneau du haut) ---
+                        int hLeft =  static_cast<int>(normLeft * (paneHeight - 20));
+                        SDL_FRect rectLeft{ (float)x, (float)(paneHeight - hLeft), (float)w, (float)hLeft };
+
+                        uint8_t r = static_cast<uint8_t>(threshold * normLeft * 255.);
+                        uint8_t g = static_cast<uint8_t>((1. - threshold * normLeft) * 255.);
+                        SDL_SetRenderDrawColor(renderer, r, 0, g, 255); // Cyan
+                        SDL_RenderFillRect(renderer, &rectLeft);
+
+                        // --- Canal Droit (Panneau du bas) ---
+                        int hRight =  static_cast<int>(normRight * (paneHeight - 20));
+                        r = static_cast<uint8_t>(threshold * normRight * 255.);
+                        g = static_cast<uint8_t>((1. - threshold * normRight) * 255.);
+                        SDL_FRect rectRight{ (float)x, (float)(paneHeight ), (float)w, (float)hRight };
+                        SDL_SetRenderDrawColor(renderer, r,0,g, 255); // Magenta
+                        SDL_RenderFillRect(renderer, &rectRight);
+                    }
+
+                    // Ligne de séparation médiane
+                    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
+                    SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
+
+                    SDL_RenderPresent(renderer);
+                }
+                // playback
+                SDL_PutAudioStreamData(playback_stream,buff.data(),buffer_size );
+            }
+
+
+    }
+
+int main(int argc, char* argv[]) 
+{
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
 
 
-    SDL_Window* window = SDL_CreateWindow("Spectrogramme 2D - SDL3", WINDOW_WIDTH, WINDOW_HEIGHT, 0);
+    SDL_Window* window = SDL_CreateWindow("Spectrogramme 2D - SDL3", WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_RESIZABLE);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
     SDL_Texture*  texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, WINDOW_WIDTH, WINDOW_HEIGHT);
     spectrogram_renderer spectrogram(renderer,texture);
 
-    
+    SDL_Surface *surface =  SDL_GetWindowSurface(window);
 
+    int pitch;
+    void *pixels;
+    SDL_LockTexture(texture, nullptr, &pixels, &pitch);
+    SDL_UnlockTexture(texture);
+    
+    
     bool running = true;
     SDL_Event event;
     std::vector<float> localMagnitudes(FFT_SIZE / 2, 0.0f);
@@ -231,7 +517,9 @@ int main(int argc, char* argv[]) {
 
 
 
-    std::string f = "path/to/file"; // R3-099 - A.wav";
+    std::string f = "path";
+
+
 
     //    size_t channels = 0; 
    // double sample_rate = 44100;
@@ -316,23 +604,20 @@ int main(int argc, char* argv[]) {
 
     */
 
-        float buffer[8192];  
+
             // Configuration Audio SDL3 (Mono, 48kHz)
         SDL_AudioSpec spec{ SDL_AUDIO_F32, channels, sample_rate };
-        SDL_AudioStream* stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL,NULL);
+        SDL_AudioStream* playback_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL,NULL);
+
+        SDL_AudioStream* capture_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, &spec, NULL,NULL);
        
         const int minimum_audio = ( sample_rate * sizeof(float) ) / 2;  //  Half of samples per seconds 
         // SDL_OpenAudioDeviceStream starts the device paused. You have to tell it to start! 
-        SDL_ResumeAudioStreamDevice(stream);
+        SDL_ResumeAudioStreamDevice(playback_stream);
 
+        SDL_ResumeAudioStreamDevice(capture_stream);
 
-    // Tampons pour la FFT courante
-    std::vector<float> currentLeft = std::vector<float>(FFT_SIZE, 0.0f);
-    std::vector<float> currentRight = std::vector<float>(FFT_SIZE, 0.0f);
-    std::vector<std::complex<float>> fftLeft = std::vector<std::complex<float>>(FFT_SIZE); std::vector<std::complex<float>> fftRight = std::vector<std::complex<float>>(FFT_SIZE);
-
-    size_t paneHeight = WINDOW_HEIGHT / 2;
-
+        bool stop_playback_requested = false;
     while (running && stop_playback.load() != true && samples_cursor < samples.size()) 
     {
         while (SDL_PollEvent(&event)) {
@@ -343,111 +628,23 @@ int main(int argc, char* argv[]) {
             }
         }
 
-    if (SDL_GetAudioStreamQueued(stream) < minimum_audio)
-            {
-                // this will feed 1024 samples each frame until we get to our maximum. 
-                // generate samples from grooves 
-                next_cursor = std::min(samples.size() - 1, samples_cursor + SDL_arraysize(buffer)) ;
-                memcpy(buffer, (const void *)(samples.data()+samples_cursor), (next_cursor - samples_cursor) * sizeof(float) );
-
-                // feed the new data to the stream. It will queue at the end, and trickle out as the hardware needs more data. 
-                SDL_PutAudioStreamData(stream, buffer, (next_cursor - samples_cursor) * sizeof(float) );
-                samples_cursor = next_cursor;
-                if ( samples_cursor > samples.size() - 1 )
-                {
-                    break;
-                }
-
-            int samplesNeeded = SDL_arraysize(buffer);
-                if (samplesNeeded >= FFT_SIZE) 
-                { 
+      //  process_spectrum_play_back(paneHeight,next_cursor,minimum_audio, samples_cursor, stream,renderer, &samples,&buffer);
+                   
+        process_spectrum_capture_to_playback(stop_playback_requested,renderer, playback_stream,capture_stream,&buffer);
                     
-#if 0
-                    {
-                    // Récupérer les données du flux
-                    // Préparer les données pour la FFT complexe
-                    std::vector<std::complex<float>> fftData(FFT_SIZE);
-                    for (int i = 0; i < FFT_SIZE; ++i) 
-                    {
-                        // Optionnel mais recommandé : appliquer une fenêtre de Hamming ici pour éviter le "spectral leakage"
-                        fftData[i] = std::complex<float>(buffer[i], 0.0f);
-                    }
-                    spectrogram->fft(&fftData);
-                    // Extraction des amplitudes de la moitié positive du spectre
 
-                    for (int i = 0; i < FFT_SIZE / 2; ++i) {
-                        spectrogram->g_latestMagnitudes[i] = std::abs(fftData[i]);
-                    }
-
-                    spectrogram->addFFTFrame(&spectrogram->g_latestMagnitudes);
-                    }
-#endif                   
-
-                    // Rendu graphique
-                    SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
-                    SDL_RenderClear(renderer);
-
-                    for (size_t  i = 0; i < FFT_SIZE; ++i) 
-                    {
-                        currentLeft[i] = buffer[i * 2];
-                        currentRight[i] = buffer[i * 2 + 1];
-                    }
-
-                    for (int i = 0; i < FFT_SIZE; ++i) {
-                        float windowMultiplier = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (FFT_SIZE - 1)));
-                        fftLeft[i] = std::complex<float>(currentLeft[i] * windowMultiplier, 0.0f);
-                        fftRight[i] = std::complex<float>(currentRight[i] * windowMultiplier, 0.0f);
-                    }
-                    spectrogram.fft(&fftLeft);
-                    spectrogram.fft(&fftRight);
-
-                    int usableBins = FFT_SIZE /4; // Fréquences utiles uniques
-                    float barWidth = static_cast<float>(WINDOW_WIDTH) / usableBins;
-                    for (int i = 0; i < usableBins; ++i) {
-                        // Calcul de l'amplitude (mise à l'échelle logarithmique visuelle)
-                        float magLeft = std::abs(fftLeft[i]) / std::sqrt(FFT_SIZE);
-                        float magRight = std::abs(fftRight[i]) / std::sqrt(FFT_SIZE);
-
-                        float normLeft = std::clamp(std::log1p(magLeft * 20.0f) / 5.0f, 0.0f, 1.0f);
-                        float normRight = std::clamp(std::log1p(magRight * 20.0f) / 5.0f, 0.0f, 1.0f);
-
-                        int x = static_cast<int>(i * barWidth);
-                        int w = std::max(1, static_cast<int>(barWidth));
-
-                        // --- Canal Gauche (Panneau du haut) ---
-                        int hLeft =  static_cast<int>(normLeft * (paneHeight - 20));
-                        SDL_FRect rectLeft{ (float)x, (float)(paneHeight - hLeft), (float)w, (float)hLeft };
-                        SDL_SetRenderDrawColor(renderer, 0, 180, 255, 255); // Cyan
-                        SDL_RenderFillRect(renderer, &rectLeft);
-
-                        // --- Canal Droit (Panneau du bas) ---
-                        int hRight =  static_cast<int>(normRight * (paneHeight - 20));
-                        SDL_FRect rectRight{ (float)x, (float)(paneHeight ), (float)w, (float)hRight };
-                        SDL_SetRenderDrawColor(renderer, 255, 0, 128, 255); // Magenta
-                        SDL_RenderFillRect(renderer, &rectRight);
-                    }
-
-                    // Ligne de séparation médiane
-                    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
-                    SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
-
-                 //   SDL_RenderTexture(renderer, texture, nullptr, nullptr);
-                            
-                    SDL_RenderPresent(renderer);
-                    //SDL_Delay(16); // ~60 FPS pour le défilement
-                }
+    }
                 
-            }
+            
 
         
-    }
 
    // playback.join();
 
-    SDL_DestroyAudioStream(stream);
+    SDL_DestroyAudioStream(playback_stream);
     SDL_DestroyMutex(spectrogram.g_audioMutex);
     SDL_DestroyRenderer(renderer);
-            SDL_DestroyTexture(texture);
+    SDL_DestroyTexture(texture);
     SDL_DestroyWindow(window);
 
     SDL_Quit();
