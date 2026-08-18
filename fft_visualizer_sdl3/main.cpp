@@ -1,6 +1,8 @@
 #include <thread>
 
 #define DR_WAV_IMPLEMENTATION
+#define DR_FLAC_IMPLEMENTATION
+#define DR_MP3_IMPLEMENTATION
 #include "./dr_libs/dr_wav.h"
 #include "./dr_libs/dr_flac.h"
 #include "./dr_libs/dr_mp3.h"
@@ -12,7 +14,6 @@
 
 #include  "imgui_impl_sdlrenderer3.h"
 
-#include  "imgui_impl_opengl3.h"
 
 #include "spectrogram_renderer.h"
 #include "imfilebrowser.h"
@@ -573,7 +574,6 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
             int status = extension == ".wav" ? 1 : extension == ".flac" ? 2 : extension == ".mp3" ? 3 : 0;
             std::string file = file_path;
             
-            std::string file = path.string();
             bool success = false;
             switch(status)
             {
@@ -601,7 +601,7 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
         file_loaded.store( success == true );
         playback.store( success == true );
 
-        }).detach();
+        }, file_path, samples).detach();
 
     };
 
