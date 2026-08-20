@@ -5,13 +5,21 @@ echo $current_date_time " starting building application in " $(pwd)
 
 
 if  test -d build; then
-  rm -rf build
+  cd build
+
+  rm -rf CMakesFiles
+  if [ -f "cmake_install.cmake" ]; then
+    rm cmake_install.cmake
+  fi
+  if [ -f "CMakeCache.txt" ]; then
+    rm CMakeCache.txt
+  fi
+  cd ../
 fi
 
-if ! test -d build; then
-  echo "creating build directory..."
-  cmake -DCMAKE_BUILD_TYPE=Debug  -S . -B build
-fi
+
+cmake -DCMAKE_BUILD_TYPE=Debug  -S . -B build
+
 
 
 cmake --build build  --verbose

@@ -14,6 +14,7 @@
 
 #include  "imgui_impl_sdlrenderer3.h"
 
+#include "sse2_fft.h"
 
 #include "spectrogram_renderer.h"
 #include "imfilebrowser.h"
@@ -297,7 +298,7 @@ inline void fft(std::vector<std::complex<float>>* a) {
     }
 }
 
-constexpr float threshold = 2.5;
+constexpr float threshold = 1.;
 
 
 std::vector<uint32_t> pixelBuffer;
@@ -426,7 +427,7 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                     fft(&fftLeft);
                     fft(&fftRight);
 
-                    int usableBins = FFT_SIZE /2; // Fréquences utiles uniques
+                   /* int usableBins = FFT_SIZE /2; // Fréquences utiles uniques
                     float barWidth = static_cast<float>(WINDOW_WIDTH) / usableBins;
                     for (int i = 0; i < usableBins; ++i) {
                         // Calcul de l'amplitude (mise à l'échelle logarithmique visuelle)
@@ -456,14 +457,52 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                         SDL_SetRenderDrawColor(renderer, r,0,g, 255); // Magenta
                         SDL_RenderFillRect(renderer, &rectRight);
                     }
+                        */
 
                     // Ligne de séparation médiane
-                    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
-                    SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
+                    //SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
+                    //SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
 
                 }
 
         }
+
+        SDL_SetRenderDrawColor(renderer, 10, 10, 10, 255);
+            SDL_RenderClear(renderer);
+            int usableBins = FFT_SIZE /2; // Fréquences utiles uniques
+            float barWidth = static_cast<float>(WINDOW_WIDTH) / usableBins;
+            for (int i = 0; i < usableBins; ++i) {
+                // Calcul de l'amplitude (mise à l'échelle logarithmique visuelle)
+                float magLeft = std::abs(fftLeft[i] *= 0.995) / std::sqrt(FFT_SIZE);
+                float magRight = std::abs(fftRight[i] *= 0.995) / std::sqrt(FFT_SIZE);
+
+                float normLeft = std::clamp(std::log1p(magLeft * 20.0f) *norm, 0.0f, 1.0f);
+                float normRight = std::clamp(std::log1p(magRight * 20.0f) *norm , 0.0f, 1.0f);
+
+                int x = static_cast<int>(i * barWidth);
+                int w = std::max(2, static_cast<int>(barWidth));
+
+                // --- Canal Gauche (Panneau du haut) ---
+                int hLeft =  static_cast<int>(normLeft * (paneHeight - 20));
+                SDL_FRect rectLeft{ (float)x, (float)(paneHeight - hLeft), (float)w, (float)hLeft };
+
+                uint8_t r = static_cast<uint8_t>(threshold * normLeft * 255.);
+                uint8_t g = static_cast<uint8_t>((1. - threshold * normLeft) * 255.);
+                SDL_SetRenderDrawColor(renderer, r, 0, g, 255); // Cyan
+                SDL_RenderFillRect(renderer, &rectLeft);
+
+                // --- Canal Droit (Panneau du bas) ---
+                int hRight =  static_cast<int>(normRight * (paneHeight - 20));
+                r = static_cast<uint8_t>(threshold * normRight * 255.);
+                g = static_cast<uint8_t>((1. - threshold * normRight) * 255.);
+                SDL_FRect rectRight{ (float)x, (float)(paneHeight ), (float)w, (float)hRight };
+                SDL_SetRenderDrawColor(renderer, r,0,g, 255); // Magenta
+                SDL_RenderFillRect(renderer, &rectRight);
+            }
+
+            // Ligne de séparation médiane
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
+            SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
     }
 
     size_t last_audio_cursor_stream = 0;
@@ -471,6 +510,9 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
     std::vector<float> tmp_buffer(4 * FFT_SIZE);
     inline void process_spectrum_capture_to_playback(SDL_Renderer* renderer, SDL_AudioStream* playback_stream , SDL_AudioStream* capture_stream, std::vector<float> *buffer)
     {
+        // Rendu graphique
+            SDL_SetRenderDrawColor(renderer, 10, 10, 10, 255);
+            SDL_RenderClear(renderer);
 
             int buffer_size = SDL_GetAudioStreamAvailable( capture_stream );  // number of bytes the stream has accumulated so far.
             
@@ -491,9 +533,7 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                 { 
 
                     audio_cursor_stream  %= buffer->size()  - 1;
-        // Rendu graphique
-                    SDL_SetRenderDrawColor(renderer, 10, 10, 10, 255);
-                    SDL_RenderClear(renderer);
+
 
                     for (size_t  i = 0; i < FFT_SIZE; ++i) 
                     {
@@ -509,7 +549,7 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                     fft(&fftLeft);
                     fft(&fftRight);
 
-                    int usableBins = FFT_SIZE /2; // Fréquences utiles uniques
+                    /*int usableBins = FFT_SIZE /2; // Fréquences utiles uniques
                     float barWidth = static_cast<float>(WINDOW_WIDTH) / usableBins;
                     for (int i = 0; i < usableBins; ++i) {
                         // Calcul de l'amplitude (mise à l'échelle logarithmique visuelle)
@@ -520,7 +560,7 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                         float normRight = std::clamp(std::log1p(magRight * 20.0f) *norm , 0.0f, 1.0f);
 
                         int x = static_cast<int>(i * barWidth);
-                        int w = std::max(1, static_cast<int>(barWidth));
+                        int w = std::max(5, static_cast<int>(barWidth));
 
                         // --- Canal Gauche (Panneau du haut) ---
                         int hLeft =  static_cast<int>(normLeft * (paneHeight - 20));
@@ -538,15 +578,49 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                         SDL_FRect rectRight{ (float)x, (float)(paneHeight ), (float)w, (float)hRight };
                         SDL_SetRenderDrawColor(renderer, r,0,g, 255); // Magenta
                         SDL_RenderFillRect(renderer, &rectRight);
-                    }
+                    }*/
 
-                    // Ligne de séparation médiane
-                    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
-                    SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
+                    
                 }
                 // playback
                 SDL_PutAudioStreamData(playback_stream,buff.data(),buffer_size );
             }
+
+            int usableBins = FFT_SIZE /2; // Fréquences utiles uniques
+                    float barWidth = static_cast<float>(WINDOW_WIDTH) / usableBins;
+                    for (int i = 0; i < usableBins; ++i) 
+                    {
+                        // Calcul de l'amplitude (mise à l'échelle logarithmique visuelle)
+                        float magLeft = std::abs(fftLeft[i] *= 0.995) / std::sqrt(FFT_SIZE);
+                        float magRight = std::abs(fftRight[i]*= 0.995) / std::sqrt(FFT_SIZE);
+
+                        float normLeft = std::clamp(std::log1p(magLeft * 20.0f) *norm, 0.0f, 1.0f);
+                        float normRight = std::clamp(std::log1p(magRight * 20.0f) *norm , 0.0f, 1.0f);
+
+                        int x = static_cast<int>(i * barWidth);
+                        int w = std::max(2, static_cast<int>(barWidth));
+
+                        // --- Canal Gauche (Panneau du haut) ---
+                        int hLeft =  static_cast<int>(normLeft * (paneHeight - 20));
+                        SDL_FRect rectLeft{ (float)x, (float)(paneHeight - hLeft), (float)w, (float)hLeft };
+
+                        uint8_t r = static_cast<uint8_t>( normLeft * 255.);
+                        uint8_t g = static_cast<uint8_t>((1.-  normLeft) * 255.);
+                        SDL_SetRenderDrawColor(renderer, r, 0, g, 255); // Cyan
+                        SDL_RenderFillRect(renderer, &rectLeft);
+
+                        // --- Canal Droit (Panneau du bas) ---
+                        int hRight =  static_cast<int>(normRight * (paneHeight - 20));
+                        r = static_cast<uint8_t>( normRight * 255.);
+                        g = static_cast<uint8_t>((1. -  normRight) * 255.);
+                        SDL_FRect rectRight{ (float)x, (float)(paneHeight ), (float)w, (float)hRight };
+                        SDL_SetRenderDrawColor(renderer, r,0,g, 255); // Magenta
+                        SDL_RenderFillRect(renderer, &rectRight);
+                    }
+
+            // Ligne de séparation médiane
+                    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
+                    SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
 
 
     }
@@ -555,6 +629,209 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
     alignas(64) std::atomic<uint> sample_rate = 44100;
     alignas(64) std::atomic<bool> file_loaded = false;
 
+
+struct geometry_spectrum_settings {
+    int num_bars = FFT_SIZE;
+    float bar_width = 2.0f;
+    float spacing = 0.0f;
+    float max_height = 250.0f;
+    float peak_thickness = 0.0f;
+    float gravity = 1.5f;
+    int hold_time = 15;
+
+    // Dégradé pour le Canal Gauche (Haut)
+    SDL_FColor color_center_l = { 0.0f, 0.0f, 1.0f, 1.0f }; // Vert néon au centre (Y = center)
+    SDL_FColor color_top_l    = { 1.0f, 0.0f, 0.0f, 1.0f }; // Bleu électrique au sommet
+
+    // Dégradé pour le Canal Droit (Bas - Miroir)
+    SDL_FColor color_center_r = { 0.0f, 0.0f, 1.f, 0.1f }; // Idem Vert néon au centre
+    // Le rouge/rose fluo pour le bas crée une asymétrie esthétique superbe
+    SDL_FColor color_bottom_r = { 1.0f, 0.0f, 0.f, 0.1f }; 
+
+    // Couleur unie pour la ligne de crête
+    SDL_FColor color_peak     = { 0.0f, 0.0f, 0.0f, 0.1f }; // Blanc pur
+};
+
+struct peak_state {
+    std::vector<float> positions_l; // Hauteurs actuelles des crêtes (Gauche)
+    std::vector<float> positions_r; // Hauteurs actuelles des crêtes (Droite)
+    std::vector<int> hold_counters_l; // Compteurs de maintien au sommet
+    std::vector<int> hold_counters_r;
+
+    void Init(int num_bars) {
+        positions_l.assign(num_bars, 0.0f);
+        positions_r.assign(num_bars, 0.0f);
+        hold_counters_l.assign(num_bars, 0);
+        hold_counters_r.assign(num_bars, 0);
+    }
+};
+
+
+// Convertit une magnitude linéaire [0.0, 1.0] en un ratio de hauteur [0.0, 1.0] basé sur les dB
+inline float magnitude_toDb_ratio(float magnitude) {
+    const float min_db = -60.0f; // Plancher de bruit (le bas de votre barre = -60 dB)
+    
+    // 1. Sécurité anti-zéro : on applique un seuil minuscule pour éviter log10(0)
+    if (magnitude < 1e-5f) {
+        return 0.0f; // Sous les -100 dB, la barre reste à zéro
+    }
+
+    // 2. Calcul du niveau en dB
+    float db = 20.0f * std::log10(magnitude);
+
+    // 3. Écrêtage (Clamping) pour rester dans la plage cible [-60 dB, 0 dB]
+    if (db < min_db) db = min_db;
+    if (db > 0.0f)   db = 0.0f;
+
+    // 4. Normalisation linéaire de la plage de dB vers un ratio [0.0f, 1.0f]
+    // -60 dB deviendra 0.0f (hauteur nulle)
+    //   0 dB deviendra 1.0f (hauteur maximale)
+    float ratio = 1.0f - (db / min_db); 
+    
+    return ratio;
+}
+
+
+std::vector<SDL_Vertex> v_left, v_right, v_peaks;
+std::vector<int> i_left, i_right, i_peaks;
+std::vector<float> fft_left, fft_right;
+
+inline void render_geometry_mirror_spectrum
+(
+    SDL_Renderer* renderer,
+    const geometry_spectrum_settings* settings, 
+    peak_state *peaks,
+    int window_width, int window_height,
+    sse2_fft *fft, 
+    SDL_AudioStream* playback_stream , 
+    SDL_AudioStream* capture_stream, 
+    std::vector<float> *buffer
+) 
+{
+
+    int buffer_size = SDL_GetAudioStreamAvailable( capture_stream );  // number of bytes the stream has accumulated so far.
+            
+    if ( playback.load() == true && buffer_size > 0)
+    {
+        std::vector<float> buff(buffer_size);
+        size_t frame_size_in_bytes = sizeof(float) * 2;
+
+        SDL_GetAudioStreamData(capture_stream,buff.data(),buffer_size);
+
+        last_audio_cursor_stream = audio_cursor_stream;
+        audio_cursor_stream = std::min( audio_cursor_stream + buffer_size, buffer->size()  - 1);
+
+        memcpy(buffer->data() + last_audio_cursor_stream, buff.data(), (audio_cursor_stream-last_audio_cursor_stream) *sizeof(float) );
+        
+        int samplesbuffered = audio_cursor_stream;
+        if (samplesbuffered == buffer->size()  - 1) 
+        { 
+            audio_cursor_stream  %= buffer->size()  - 1;
+        
+            fft->process_audio_spectrum(buffer,&fft_left,&fft_right );
+
+        float center_y = window_height / 2.0f;
+        float total_width = (settings->num_bars * settings->bar_width) + ((settings->num_bars - 1) * settings->spacing);
+        float start_x = (window_width - total_width) / 2.0f;
+
+        // Tableaux de géométrie globaux pour grouper le rendu (Batching)
+            v_left.resize(0);
+            v_right.resize(0);
+            v_peaks.resize(0);
+
+        // Lambda helper pour pousser un rectangle (4 sommets + 6 indices) avec couleurs par sommets
+        auto push_rectangle_geometry = [](std::vector<SDL_Vertex>& vertices, std::vector<int>& indices,
+                                        float x, float y, float w, float h, 
+                                        SDL_FColor c_top_left, SDL_FColor c_top_right, 
+                                        SDL_FColor c_bot_left, SDL_FColor c_bot_right) 
+        {
+            int base_idx = (int)vertices.size();
+
+            // 4 Sommets du rectangle
+            SDL_Vertex tl = { {x, y},     c_top_left,  {0,0} }; // Top Left
+            SDL_Vertex tr = { {x+w, y},   c_top_right, {0,0} }; // Top Right
+            SDL_Vertex bl = { {x, y+h},   c_bot_left,  {0,0} }; // Bottom Left
+            SDL_Vertex br = { {x+w, y+h}, c_bot_right, {0,0} }; // Bottom Right
+
+            vertices.push_back(tl); vertices.push_back(tr);
+            vertices.push_back(bl); vertices.push_back(br);
+
+            // 6 Indices formant 2 triangles (Sens horaire : TL->TR->BR et TL->BR->BL)
+            indices.push_back(base_idx + 0); indices.push_back(base_idx + 1); indices.push_back(base_idx + 3);
+            indices.push_back(base_idx + 0); indices.push_back(base_idx + 3); indices.push_back(base_idx + 2);
+        };
+
+        // Boucle de génération de la géométrie
+        for (int i = 0; i < settings->num_bars; ++i) {
+            float magnitude_l = (i < fft_left.size())  ? fft_left[i]  : 0.0f;
+            float magnitude_r = (i < fft_right.size()) ? fft_right[i] : 0.0f;
+            
+            float height_l = magnitude_toDb_ratio(magnitude_l) * settings->max_height;
+            float height_r = magnitude_toDb_ratio(magnitude_r) * settings->max_height;
+            float current_x = start_x + i * (settings->bar_width + settings->spacing);
+
+            // --- TRAITEMENT PHYSIQUE DES CRÊTES (Identique) ---
+          /*  if (height_l >= peaks->positions_l[i]) { peaks->positions_l[i] = height_l; peaks->hold_counters_l[i] = settings->hold_time; }
+            else { if (peaks->hold_counters_l[i] > 0) peaks->hold_counters_l[i]--; else { peaks->positions_l[i] -= settings->gravity; if (peaks->positions_l[i] < 0.0f) peaks->positions_l[i] = 0.0f; } }
+
+            if (height_r >= peaks->positions_r[i]) { peaks->positions_r[i] = height_r; peaks->hold_counters_r[i] = settings->hold_time; }
+            else { if (peaks->hold_counters_r[i] > 0) peaks->hold_counters_r[i]--; else { peaks->positions_r[i] -= settings->gravity; if (peaks->positions_r[i] < 0.0f) peaks->positions_r[i] = 0.0f; } }
+            */
+
+            // --- GÉNÉRATION GÉOMÉTRIE : CANAL GAUCHE (HAUT) ---
+            // Le haut a la couleur 'color_top_l' et le bas (sur la ligne centrale) a 'color_center_l'
+            push_rectangle_geometry(v_left, i_left, 
+                                current_x, center_y - height_l, settings->bar_width, height_l,
+                                settings->color_top_l, settings->color_top_l, 
+                                settings->color_center_l, settings->color_center_l);
+
+            // Crête Gauche
+            //push_rectangle_geometry(v_peaks, i_peaks,
+            //                    current_x, center_y - peaks->positions_l[i] - settings->peak_thickness, settings->bar_width, settings->peak_thickness,
+            //                    settings->color_peak, settings->color_peak, settings->color_peak, settings->color_peak);
+
+            // --- GÉNÉRATION GÉOMÉTRIE : CANAL DROIT (BAS - MIROIR) ---
+            // Le haut (sur la ligne centrale) a 'color_center_r' et le bas a 'color_bottom_r'
+            push_rectangle_geometry(v_right, i_right,
+                                current_x, center_y, settings->bar_width, height_r,
+                                settings->color_center_r, settings->color_center_r,
+                                settings->color_bottom_r, settings->color_bottom_r);
+
+            // Crête Droite
+          //  push_rectangle_geometry(v_peaks, i_peaks,
+          //                      current_x, center_y + peaks->positions_r[i], settings->bar_width, settings->peak_thickness,
+          //                      settings->color_peak, settings->color_peak, settings->color_peak, settings->color_peak);
+        }
+
+        SDL_SetRenderDrawColor(renderer, 10, 10, 10, 255);
+        SDL_RenderClear(renderer);
+        // --- ENVOI DE LA GÉOMÉTRIE AU GPU (BATCHED RENDERING) ---
+        // Mode de fusion standard pour gérer la translucidité des couleurs si vous baissez l'alpha
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+        // 1. Dessiner toutes les barres de gauche d'un coup
+
+            SDL_RenderGeometry(renderer, NULL, v_left.data(), (int)v_left.size(), i_left.data(), (int)i_left.size());
+        
+        // 2. Dessiner toutes les barres de droite d'un coup
+
+            SDL_RenderGeometry(renderer, NULL, v_right.data(), (int)v_right.size(), i_right.data(), (int)i_right.size());
+        
+        // 3. Dessiner toutes les barres de crêtes d'un coup
+
+            SDL_RenderGeometry(renderer, NULL, v_peaks.data(), (int)v_peaks.size(), i_peaks.data(), (int)i_peaks.size());
+        
+
+                            // Ligne de séparation médiane
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
+            SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
+        }
+
+        // playback
+        SDL_PutAudioStreamData(playback_stream,buff.data(),buffer_size );
+    }
+
+}
 
     static void load_audio_file(const char* file_path, std::vector<float> *samples)
     {
@@ -660,6 +937,17 @@ bool ImGuiPlayButton(const char* label_id, ImVec2 size) {
 int main(int argc, char* argv[]) 
 {
 
+
+    geometry_spectrum_settings settings; 
+    peak_state peaks;
+    peaks.Init(settings.num_bars);
+    peaks.hold_counters_l.resize(settings.num_bars);
+    peaks.hold_counters_r.resize(settings.num_bars);
+    peaks.positions_l.resize(settings.num_bars);
+    peaks.positions_r.resize(settings.num_bars);
+
+    sse2_fft fft_sse2(FFT_SIZE);
+
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
         printf("Erreur d'initialisation SDL: %s\n", SDL_GetError());
         return -1;
@@ -730,16 +1018,7 @@ int main(int argc, char* argv[])
 
     std::vector<float> samples;
 
-    std::string f = "/home/descourt/Bureau/epic-synthwave-mixtape-for-men-with-balls-of-steel-vol-1.wav"; //R3-099 - A.wav"; //FifeAndDrumsStereo.wav"; // R3-099 - A.wav";
-
-    //f = "/home/descourt/Téléchargements/Procedentem sponsum.wav"; //Recordare virgo mater [TubeRipper.cc].flac";
-
-    //    size_t channels = 0; 
-   // double sample_rate = 44100;
-
     size_t samples_cursor = 0, next_cursor = 0;
-
-
 
       /*
     std::thread playback = std::thread([&,channels,sample_rate](spectrogram_renderer *spectrogram)->void
@@ -839,6 +1118,9 @@ int main(int argc, char* argv[])
 
         alignas(64) std::atomic<bool> close_dialog = false;
 
+        int w = WINDOW_WIDTH,h = WINDOW_HEIGHT;
+
+
     while (running ) 
     {
         while (SDL_PollEvent(&event)) 
@@ -855,6 +1137,10 @@ int main(int argc, char* argv[])
                 //if (closed_id == SDL_GetWindowID(window_ui)) {
                 //    SDL_HideWindow(window_ui); // Masquer simplement l'UI si on clique sur sa croix
                // }
+            }
+            else if ( event.type == SDL_EVENT_WINDOW_RESIZED)
+            {
+                SDL_GetWindowSize(window,&w,&h);
 
             }
         }
@@ -867,7 +1153,10 @@ int main(int argc, char* argv[])
             case 1:
             break;
             case 2:
-            process_spectrum_capture_to_playback(renderer, playback_stream,capture_stream,&buffer);
+            {
+            //render_geometry_mirror_spectrum(renderer,&settings,&peaks,w,h, &fft_sse2, playback_stream, capture_stream, &buffer );
+              process_spectrum_capture_to_playback(renderer, playback_stream,capture_stream,&buffer);
+            }
             break;
         }
 

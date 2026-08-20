@@ -4,16 +4,22 @@
 
 project(fft_visualizer VERSION 0.1 LANGUAGES C CXX)
 
-include(FetchContent)
 
-message(STATUS "Téléchargement de Dear ImGui depuis GitHub...")
+if(EXISTS "./_builds/_deps/imgui-build" AND IS_DIRECTORY "./_builds/_deps/imgui-build")
+    message(STATUS "imgui found!")
+else()
+    include(FetchContent)
 
-FetchContent_Declare(
-    imgui
-    GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        docking 
-)
-FetchContent_MakeAvailable(imgui)
+    message(STATUS "Téléchargement de Dear ImGui depuis GitHub...")
+
+    FetchContent_Declare(
+        imgui
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG        docking 
+    )
+    FetchContent_MakeAvailable(imgui)
+endif()
+
 
 set(imgui_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src )
 
@@ -55,6 +61,7 @@ set(PROJECT_SOURCES
         main.cpp
         miniaudio.c
         spectrogram_renderer.h
+        sse2_fft.h
 
         dr_libs/dr_flac.h 
         dr_libs/dr_mp3.h 
