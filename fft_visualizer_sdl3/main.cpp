@@ -387,7 +387,7 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
     alignas(64) std::atomic<bool> playback = false; 
     alignas(64) std::atomic<bool> stop_playback_requested = false;
 
-    constexpr float norm = 1.f/10.f;
+    constexpr float norm = 1.f/2.f;
     inline void process_spectrum_play_back(size_t paneHeight,size_t& next_cursor,int minimum_audio, size_t &samples_cursor, SDL_AudioStream* stream,SDL_Renderer *renderer, std::vector<float> *samples,std::vector<float> *buffer)
     {
             if (playback.load() == true && SDL_GetAudioStreamQueued(stream) < minimum_audio)
@@ -473,14 +473,14 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
             float barWidth = static_cast<float>(WINDOW_WIDTH) / usableBins;
             for (int i = 0; i < usableBins; ++i) {
                 // Calcul de l'amplitude (mise à l'échelle logarithmique visuelle)
-                float magLeft = std::abs(fftLeft[i] *= 0.995) / std::sqrt(FFT_SIZE);
-                float magRight = std::abs(fftRight[i] *= 0.995) / std::sqrt(FFT_SIZE);
+                float magLeft = std::abs(fftLeft[i] *= 0.95) / std::sqrt(FFT_SIZE);
+                float magRight = std::abs(fftRight[i] *= 0.95) / std::sqrt(FFT_SIZE);
 
                 float normLeft = std::clamp(std::log1p(magLeft * 20.0f) *norm, 0.0f, 1.0f);
                 float normRight = std::clamp(std::log1p(magRight * 20.0f) *norm , 0.0f, 1.0f);
 
-                int x = static_cast<int>(i * barWidth);
-                int w = std::max(2, static_cast<int>(barWidth));
+                float x = static_cast<int>(i * barWidth);
+                float w = std::max(1, static_cast<int>(barWidth));
 
                 // --- Canal Gauche (Panneau du haut) ---
                 int hLeft =  static_cast<int>(normLeft * (paneHeight - 20));
@@ -495,14 +495,14 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                 int hRight =  static_cast<int>(normRight * (paneHeight - 20));
                 r = static_cast<uint8_t>(threshold * normRight * 255.);
                 g = static_cast<uint8_t>((1. - threshold * normRight) * 255.);
-                SDL_FRect rectRight{ (float)x, (float)(paneHeight ), (float)w, (float)hRight };
+                SDL_FRect rectRight{ x, (float)(paneHeight ), w, (float)hRight };
                 SDL_SetRenderDrawColor(renderer, r,0,g, 255); // Magenta
                 SDL_RenderFillRect(renderer, &rectRight);
             }
 
             // Ligne de séparation médiane
-            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
-            SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
+           // SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
+           // SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
     }
 
     size_t last_audio_cursor_stream = 0;
@@ -591,8 +591,8 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                     for (int i = 0; i < usableBins; ++i) 
                     {
                         // Calcul de l'amplitude (mise à l'échelle logarithmique visuelle)
-                        float magLeft = std::abs(fftLeft[i] *= 0.995) / std::sqrt(FFT_SIZE);
-                        float magRight = std::abs(fftRight[i]*= 0.995) / std::sqrt(FFT_SIZE);
+                        float magLeft = std::abs(fftLeft[i] *= 0.999) / std::sqrt(FFT_SIZE);
+                        float magRight = std::abs(fftRight[i]*= 0.999) / std::sqrt(FFT_SIZE);
 
                         float normLeft = std::clamp(std::log1p(magLeft * 20.0f) *norm, 0.0f, 1.0f);
                         float normRight = std::clamp(std::log1p(magRight * 20.0f) *norm , 0.0f, 1.0f);
@@ -619,8 +619,8 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                     }
 
             // Ligne de séparation médiane
-                    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
-                    SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
+                    //SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
+                    //SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
 
 
     }
@@ -628,6 +628,7 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
     alignas(64) std::atomic<uint> channels = 2; 
     alignas(64) std::atomic<uint> sample_rate = 44100;
     alignas(64) std::atomic<bool> file_loaded = false;
+    alignas(64) std::atomic<bool> error_file_loading = false;
 
 
 struct geometry_spectrum_settings {
@@ -730,6 +731,11 @@ inline void render_geometry_mirror_spectrum
         
             fft->process_audio_spectrum(buffer,&fft_left,&fft_right );
 
+        // playback
+            SDL_PutAudioStreamData(playback_stream,buff.data(),buffer_size );
+        }
+    }
+
         float center_y = window_height / 2.0f;
         float total_width = (settings->num_bars * settings->bar_width) + ((settings->num_bars - 1) * settings->spacing);
         float start_x = (window_width - total_width) / 2.0f;
@@ -763,8 +769,8 @@ inline void render_geometry_mirror_spectrum
 
         // Boucle de génération de la géométrie
         for (int i = 0; i < settings->num_bars; ++i) {
-            float magnitude_l = (i < fft_left.size())  ? fft_left[i]  : 0.0f;
-            float magnitude_r = (i < fft_right.size()) ? fft_right[i] : 0.0f;
+            float magnitude_l = (i < fft_left.size())  ? fft_left[i] *= 0.995  : 0.0f;
+            float magnitude_r = (i < fft_right.size()) ? fft_right[i] *= 0.995 : 0.0f;
             
             float height_l = magnitude_toDb_ratio(magnitude_l) * settings->max_height;
             float height_r = magnitude_toDb_ratio(magnitude_r) * settings->max_height;
@@ -801,7 +807,6 @@ inline void render_geometry_mirror_spectrum
           //  push_rectangle_geometry(v_peaks, i_peaks,
           //                      current_x, center_y + peaks->positions_r[i], settings->bar_width, settings->peak_thickness,
           //                      settings->color_peak, settings->color_peak, settings->color_peak, settings->color_peak);
-        }
 
         SDL_SetRenderDrawColor(renderer, 10, 10, 10, 255);
         SDL_RenderClear(renderer);
@@ -820,16 +825,13 @@ inline void render_geometry_mirror_spectrum
         // 3. Dessiner toutes les barres de crêtes d'un coup
 
             SDL_RenderGeometry(renderer, NULL, v_peaks.data(), (int)v_peaks.size(), i_peaks.data(), (int)i_peaks.size());
-        
+        }
 
                             // Ligne de séparation médiane
             SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
             SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
-        }
-
-        // playback
-        SDL_PutAudioStreamData(playback_stream,buff.data(),buffer_size );
-    }
+        
+    
 
 }
 
@@ -876,6 +878,8 @@ inline void render_geometry_mirror_spectrum
                 sample_rate.store(s);
                 file_loaded.store(true );
             }
+
+            error_file_loading.store(success);
 
         }, path, samples).detach();
     };
@@ -1018,7 +1022,16 @@ int main(int argc, char* argv[])
 
     std::vector<float> samples;
 
+    std::string f = "/home/descourt/Bureau/epic-synthwave-mixtape-for-men-with-balls-of-steel-vol-1.wav"; //R3-099 - A.wav"; //FifeAndDrumsStereo.wav"; // R3-099 - A.wav";
+
+    //f = "/home/descourt/Téléchargements/Procedentem sponsum.wav"; //Recordare virgo mater [TubeRipper.cc].flac";
+
+    //    size_t channels = 0; 
+   // double sample_rate = 44100;
+
     size_t samples_cursor = 0, next_cursor = 0;
+
+
 
       /*
     std::thread playback = std::thread([&,channels,sample_rate](spectrogram_renderer *spectrogram)->void
@@ -1191,7 +1204,7 @@ int main(int argc, char* argv[])
         ImGui::Separator();
         
         // if capture to playback not selected
-        if (current_window_idx != 2)
+        if (current_window_idx != 2 && playback.load() == false )
         {
             ImGui::Text("choose audio file :");
             ImGui::TextUnformatted(selected_file_path.c_str());
@@ -1207,12 +1220,12 @@ int main(int argc, char* argv[])
 
             if (fileDialog.HasSelected()) {
 
-
                 selected_file_path = fileDialog.GetSelected().string();
                 
                 if ( !selected_file_path.empty() )
                 {
-
+                    std::string m =std::string("loading file ...")+selected_file_path;
+                    ImGui::Text(m.c_str());
                     std::thread( [](std::string file, std::vector<float> *samples, SDL_AudioStream* playback_stream )
                     {
                         load_audio_file(file.c_str(),samples);
@@ -1225,8 +1238,9 @@ int main(int argc, char* argv[])
                 }
                 close_dialog.store(true);
                 fileDialog.ClearSelected(); // Réinitialiser le dialogue
-            
             }
+
+
             if (close_dialog.load() )
             {
                 fileDialog.Close();
@@ -1254,6 +1268,17 @@ int main(int argc, char* argv[])
         }
         if ( file_loaded.load() == true || current_window_idx == 2)
         {
+            ImGui::Separator();
+            if ( file_loaded && current_window_idx != 2 )
+            {
+                if ( playback.load() == false)
+                ImGui::Text("file ready to play");
+                else
+                ImGui::Text("playing file.");
+            }
+            ImGui::Spacing(); 
+            ImGui::Dummy(ImVec2(0.0f, 25.0f)); 
+            ImGui::Separator();
             // Bouton Play
             if (playback.load() == false && ImGuiPlayButton("##PlayBtn", ImVec2(32.0f, 32.0f))) 
             {
