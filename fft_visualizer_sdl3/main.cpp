@@ -1308,6 +1308,14 @@ int main(int argc, char* argv[])
                         samples_cursor.store( play_position );
                         current_playing_time = play_position/sample_rate/channels;
                     }
+                    std::vector<float> signal(256);
+                    if (samples_cursor.load()+ 256 < samples.size() )
+                    {
+                        memcpy(signal.data(), samples.data() + samples_cursor.load(), 256 * sizeof(float));
+                        ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(1.0f, 0.4f, 0.4f, 1.0f)); // Courbe Rouge
+                        ImGui::PlotLines("Samples", signal.data(), 256,0,"samples",-1.1f, 1.1f, ImVec2(0, 50));
+                        ImGui::PopStyleColor();
+                    }
                 }
             }
             ImGui::Spacing(); 
