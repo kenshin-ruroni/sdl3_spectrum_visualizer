@@ -8,6 +8,9 @@
 #include "./dr_libs/dr_flac.h"
 #include "./dr_libs/dr_mp3.h"
 
+#include <vector>
+#include <deque>
+
 #include "miniaudio.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -1140,6 +1143,9 @@ int main(int argc, char* argv[])
 
     float gain_value = -20.;
 
+    std::vector<float> signal(256,0.); 
+    std::deque<float> signal_queue(256,0.); 
+
     while (running ) 
     {
         while (SDL_PollEvent(&event)) 
@@ -1299,19 +1305,27 @@ int main(int argc, char* argv[])
                 ImGui::Text("file ready to play");
                 else
                 { 
-
-                    std::string d = std::string("playing file: ")+duration_to_hhmmss(current_playing_time)+std::string("/")+duration_to_hhmmss(total_playing_time);
+                    std::string c = duration_to_hhmmss(current_playing_time);
+                    std::string d = std::string("playing file: ")+c+std::string("/")+duration_to_hhmmss(total_playing_time);
                     ImGui::Text(d.c_str());
-                    if (ImGui::SliderInt("##playing_position", &play_position, 0, samples.size() - 1))
+                    bool change_play_position = ImGui::SliderInt("##playing_position", &play_position, 0, samples.size() - 1,c.c_str(),0);
+                    if (!change_play_position)
+                    {
+                        play_position = samples_cursor.load();
+                    }
+                    else 
                     {
                         audio_cursor_stream.store( play_position );
                         samples_cursor.store( play_position );
                         current_playing_time = play_position/sample_rate/channels;
                     }
-                    std::vector<float> signal(256);
-                    if (samples_cursor.load()+ 256 < samples.size() )
+                    
+
+                    if (samples_cursor.load() < samples.size() )
                     {
-                        memcpy(signal.data(), samples.data() + samples_cursor.load(), 256 * sizeof(float));
+                        signal_queue.push_back( *(samples.data() + samples_cursor.load() ) );
+                        signal_queue.pop_front();
+                        signal = std::vector<float>(signal_queue.begin(),signal_queue.end() );
                         ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(1.0f, 0.4f, 0.4f, 1.0f)); // Courbe Rouge
                         ImGui::PlotLines("Samples", signal.data(), 256,0,"samples",-1.1f, 1.1f, ImVec2(0, 50));
                         ImGui::PopStyleColor();
@@ -1325,6 +1339,7 @@ int main(int argc, char* argv[])
 
             if (playback.load() == false && ImGuiPlayButton("##PlayBtn", ImVec2(32.0f, 32.0f)) ) 
             {
+                play_position = 0;
                 last_audio_cursor_stream = 0;
                 audio_cursor_stream = 0;
                 samples_cursor = 0;
