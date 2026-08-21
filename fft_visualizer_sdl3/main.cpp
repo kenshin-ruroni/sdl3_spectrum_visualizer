@@ -1,4 +1,5 @@
 #include <thread>
+#include <chrono>
 
 #define DR_WAV_IMPLEMENTATION
 #define DR_FLAC_IMPLEMENTATION
@@ -18,6 +19,37 @@
 
 #include "spectrogram_renderer.h"
 #include "imfilebrowser.h"
+
+static auto now()
+{
+        return  std::chrono::high_resolution_clock::now();
+}
+static double now_to_seconds()
+{
+       return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::time_point_cast<std::chrono::nanoseconds>( now() ).time_since_epoch()).count() * 1.0e-9;
+}
+
+static inline double elapsed_time_in_seconds(std::chrono::time_point<std::chrono::high_resolution_clock> start,
+                                                 std::chrono::time_point<std::chrono::high_resolution_clock> end)
+    {
+        return  abs(std::chrono::duration_cast<std::chrono::microseconds>( end - start ).count())*1e-6;
+    }
+
+static std::string duration_to_hhmmss(double duration)
+    {
+
+        duration = std::fmod(duration,24.*3600.);
+        size_t hh = duration/3600;
+        duration = std::fmod(duration,3600.);
+        size_t mm = duration/60;
+        duration = std::fmod(duration,60.);
+        size_t ss = duration;
+        duration -= (double)ss;
+        duration = round(duration*100000.);
+        std::string r = std::to_string(hh)+":"+std::to_string(mm)+":"+std::to_string(ss)+"."+std::to_string(duration);
+        return r;
+    }
+
 
 inline bool load_wav_file(std::string &path,std::vector<float> *interleaved_samples, uint *channels, uint *sample_rate)
 {
@@ -591,8 +623,8 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                     for (int i = 0; i < usableBins; ++i) 
                     {
                         // Calcul de l'amplitude (mise à l'échelle logarithmique visuelle)
-                        float magLeft = std::abs(fftLeft[i] *= 0.999) / std::sqrt(FFT_SIZE);
-                        float magRight = std::abs(fftRight[i]*= 0.999) / std::sqrt(FFT_SIZE);
+                        float magLeft = std::abs(fftLeft[i] *= 0.95) / std::sqrt(FFT_SIZE);
+                        float magRight = std::abs(fftRight[i]*= 0.95) / std::sqrt(FFT_SIZE);
 
                         float normLeft = std::clamp(std::log1p(magLeft * 20.0f) *norm, 0.0f, 1.0f);
                         float normRight = std::clamp(std::log1p(magRight * 20.0f) *norm , 0.0f, 1.0f);
@@ -769,8 +801,8 @@ inline void render_geometry_mirror_spectrum
 
         // Boucle de génération de la géométrie
         for (int i = 0; i < settings->num_bars; ++i) {
-            float magnitude_l = (i < fft_left.size())  ? fft_left[i] *= 0.995  : 0.0f;
-            float magnitude_r = (i < fft_right.size()) ? fft_right[i] *= 0.995 : 0.0f;
+            float magnitude_l = (i < fft_left.size())  ? fft_left[i] *= 0.95  : 0.0f;
+            float magnitude_r = (i < fft_right.size()) ? fft_right[i] *= 0.95 : 0.0f;
             
             float height_l = magnitude_toDb_ratio(magnitude_l) * settings->max_height;
             float height_r = magnitude_toDb_ratio(magnitude_r) * settings->max_height;
@@ -1133,6 +1165,9 @@ int main(int argc, char* argv[])
 
         int w = WINDOW_WIDTH,h = WINDOW_HEIGHT;
 
+    std::chrono::time_point<std::chrono::high_resolution_clock> start_playing_time;
+    std::chrono::time_point<std::chrono::high_resolution_clock> current_playing_time;
+    double total_playing_time;
 
     while (running ) 
     {
@@ -1274,7 +1309,12 @@ int main(int argc, char* argv[])
                 if ( playback.load() == false)
                 ImGui::Text("file ready to play");
                 else
-                ImGui::Text("playing file.");
+                { 
+                    current_playing_time = now();
+                    elapsed_time_in_seconds(start_playing_time,current_playing_time);
+                    std::string d = std::string("playing file: ")+duration_to_hhmmss(elapsed_time_in_seconds(start_playing_time,current_playing_time))+std::string("/")+duration_to_hhmmss(total_playing_time);
+                    ImGui::Text(d.c_str());
+                }
             }
             ImGui::Spacing(); 
             ImGui::Dummy(ImVec2(0.0f, 25.0f)); 
@@ -1291,11 +1331,15 @@ int main(int argc, char* argv[])
                 {
                     SDL_ResumeAudioStreamDevice(capture_stream);
                 }
+                
                 playback.store(true);
+                total_playing_time = samples.size()/channels / sample_rate;
+                start_playing_time = now();
+                ImGui::SameLine(); 
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lancer la lecture");
 
-            ImGui::SameLine(); 
+            
 
             if (ImGuiStopButton("##AudioStop", ImVec2(32.0f, 32.0f))) 
             {
