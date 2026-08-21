@@ -332,6 +332,18 @@ inline void fft(std::vector<std::complex<float>>* a) {
 
 constexpr float threshold = 1.;
 
+    alignas(64) std::atomic<bool> playback = false; 
+    alignas(64) std::atomic<bool> stop_playback_requested = false;
+    alignas(64) std::atomic<size_t> samples_cursor = 0, next_cursor = 0;
+    alignas(64) std::atomic<float> gain_db = 0.f;
+    alignas(64) std::atomic<float> current_playing_time = 0.;
+    alignas(64) std::atomic<float> gain = std::pow(10.f,gain_db/20.f);
+
+        alignas(64) std::atomic<uint> channels = 2; 
+    alignas(64) std::atomic<uint> sample_rate = 44100;
+    alignas(64) std::atomic<bool> file_loaded = false;
+    alignas(64) std::atomic<bool> file_loading = false;
+    alignas(64) std::atomic<bool> error_file_loading = false;
 
 std::vector<uint32_t> pixelBuffer;
     // Ajoute une nouvelle colonne de fréquences calculées et décale le reste de l'image
@@ -416,10 +428,6 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
             }
         }
 
-    alignas(64) std::atomic<bool> playback = false; 
-    alignas(64) std::atomic<bool> stop_playback_requested = false;
-    alignas(64) std::atomic<size_t> samples_cursor = 0, next_cursor = 0;
-
     constexpr float norm = 1.f/2.f;
     inline void process_spectrum_play_back(size_t paneHeight,int minimum_audio,  SDL_AudioStream* stream,SDL_Renderer *renderer, std::vector<float> *samples,std::vector<float> *buffer)
     {
@@ -433,6 +441,7 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                 // feed the new data to the stream. It will queue at the end, and trickle out as the hardware needs more data. 
                 SDL_PutAudioStreamData(stream, buffer->data(), (next_cursor - samples_cursor) * sizeof(float) );
                 samples_cursor.store( next_cursor );
+                current_playing_time = samples_cursor/sample_rate/channels;
                 if ( samples_cursor >= samples->size() - 1 )
                 {
                     playback.store(false);
@@ -448,8 +457,8 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
 
                     for (size_t  i = 0; i < FFT_SIZE; ++i) 
                     {
-                        currentLeft[i] = (*buffer)[i * 2];
-                        currentRight[i] = (*buffer)[i * 2 + 1];
+                        currentLeft[i] = gain.load() * (*buffer)[i * 2];
+                        currentRight[i] = gain.load() * (*buffer)[i * 2 + 1];
                     }
 
                     for (int i = 0; i < FFT_SIZE; ++i) {
@@ -622,10 +631,7 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
 
     }
 
-    alignas(64) std::atomic<uint> channels = 2; 
-    alignas(64) std::atomic<uint> sample_rate = 44100;
-    alignas(64) std::atomic<bool> file_loaded = false;
-    alignas(64) std::atomic<bool> error_file_loading = false;
+
 
 
 struct geometry_spectrum_settings {
@@ -875,8 +881,8 @@ inline void render_geometry_mirror_spectrum
                 sample_rate.store(s);
                 file_loaded.store(true );
             }
-
-            error_file_loading.store(success);
+            file_loading.store(false);
+            error_file_loading.store(!success);
 
         }, path, samples).detach();
     };
@@ -1026,9 +1032,7 @@ int main(int argc, char* argv[])
     //    size_t channels = 0; 
    // double sample_rate = 44100;
 
-    alignas(64) std::atomic<size_t> samples_cursor = 0, next_cursor = 0;
-
-    float play_position;
+    int play_position;
 
       /*
     std::thread playback = std::thread([&,channels,sample_rate](spectrogram_renderer *spectrogram)->void
@@ -1122,7 +1126,7 @@ int main(int argc, char* argv[])
 
     // Libellé affiché à l'écran basé sur l'élément sélectionné
     const char* combo_preview_value = fft_visualizer_style[current_window_idx];
-    float gain = std::pow(10.f,0.f/20.f);
+
 
     bool selected_visualizer = false;
 
@@ -1131,8 +1135,10 @@ int main(int argc, char* argv[])
         int w = WINDOW_WIDTH,h = WINDOW_HEIGHT;
 
     std::chrono::time_point<std::chrono::high_resolution_clock> start_playing_time;
-    std::chrono::time_point<std::chrono::high_resolution_clock> current_playing_time;
+
     double total_playing_time;
+
+    float gain_value = -20.;
 
     while (running ) 
     {
@@ -1198,7 +1204,12 @@ int main(int argc, char* argv[])
         ImGui::Separator();
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::SliderFloat("Gain (dB)", &gain, 0.0f, 20.0f);
+        if( ImGui::SliderFloat("Gain (dB)", &gain_value, -90, 0.) )
+        {
+            gain_db.store(gain_value);
+            gain.store( std::pow( 10.f,gain_db/20.f ) );
+
+        }
         ImGui::Separator();
         ImGui::Spacing();
         ImGui::Separator();
@@ -1218,14 +1229,15 @@ int main(int argc, char* argv[])
                 fileDialog.Open();
             }
 
-            if (fileDialog.HasSelected()) {
+            if (fileDialog.HasSelected()) 
+            {
 
                 selected_file_path = fileDialog.GetSelected().string();
                 
                 if ( !selected_file_path.empty() )
                 {
-                    std::string m =std::string("loading file ...")+selected_file_path;
-                    ImGui::Text(m.c_str());
+                    file_loading.store(true);
+                    current_playing_time = 0.;
                     std::thread( [](std::string file, std::vector<float> *samples, SDL_AudioStream* playback_stream )
                     {
                         load_audio_file(file.c_str(),samples);
@@ -1238,6 +1250,18 @@ int main(int argc, char* argv[])
                 }
                 close_dialog.store(true);
                 fileDialog.ClearSelected(); // Réinitialiser le dialogue
+            }
+
+            if (file_loading)
+            {
+                std::string m =std::string("loading file ...")+selected_file_path;
+                ImGui::Text(m.c_str());
+            }
+
+            if (error_file_loading.load() == true )
+            {
+                std::string m =std::string("error: unable to load file ...")+selected_file_path;
+                ImGui::Text(m.c_str());
             }
 
 
@@ -1275,14 +1299,14 @@ int main(int argc, char* argv[])
                 ImGui::Text("file ready to play");
                 else
                 { 
-                    current_playing_time = now();
-                    elapsed_time_in_seconds(start_playing_time,current_playing_time);
-                    std::string d = std::string("playing file: ")+duration_to_hhmmss(elapsed_time_in_seconds(start_playing_time,current_playing_time))+std::string("/")+duration_to_hhmmss(total_playing_time);
+
+                    std::string d = std::string("playing file: ")+duration_to_hhmmss(current_playing_time)+std::string("/")+duration_to_hhmmss(total_playing_time);
                     ImGui::Text(d.c_str());
-                    if (ImGui::SliderFloat("##playing_position", &play_position, 0.0f, samples.size() - 1))
+                    if (ImGui::SliderInt("##playing_position", &play_position, 0, samples.size() - 1))
                     {
                         audio_cursor_stream.store( play_position );
                         samples_cursor.store( play_position );
+                        current_playing_time = play_position/sample_rate/channels;
                     }
                 }
             }
