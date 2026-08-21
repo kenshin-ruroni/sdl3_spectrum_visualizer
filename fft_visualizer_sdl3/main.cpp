@@ -1320,7 +1320,8 @@ int main(int argc, char* argv[])
             ImGui::Dummy(ImVec2(0.0f, 25.0f)); 
             ImGui::Separator();
             // Bouton Play
-            if (playback.load() == false && ImGuiPlayButton("##PlayBtn", ImVec2(32.0f, 32.0f))) 
+
+            if (playback.load() == false && ImGuiPlayButton("##PlayBtn", ImVec2(32.0f, 32.0f)) ) 
             {
                 last_audio_cursor_stream = 0;
                 audio_cursor_stream = 0;
@@ -1335,13 +1336,30 @@ int main(int argc, char* argv[])
                 playback.store(true);
                 total_playing_time = samples.size()/channels / sample_rate;
                 start_playing_time = now();
-                ImGui::SameLine(); 
+                
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lancer la lecture");
 
-            
-
-            if (ImGuiStopButton("##AudioStop", ImVec2(32.0f, 32.0f))) 
+            if (playback.load() == false)
+            {
+                ImGui::SameLine();
+                if (ImGuiStopButton("##AudioStop", ImVec2(32.0f, 32.0f))) 
+                {
+                    last_audio_cursor_stream = 0;
+                    audio_cursor_stream = 0;
+                    samples_cursor = 0;
+                    next_cursor = 0;
+                    SDL_PauseAudioStreamDevice(playback_stream);
+                    SDL_ClearAudioStream(playback_stream); 
+                    if ( current_window_idx == 2)
+                    {
+                        SDL_PauseAudioStreamDevice(capture_stream);
+                        SDL_ClearAudioStream(capture_stream); 
+                    }
+                    playback.store(false);
+                }
+            }
+            else
+            if ( ImGuiStopButton("##AudioStop", ImVec2(32.0f, 32.0f))) 
             {
                 last_audio_cursor_stream = 0;
                 audio_cursor_stream = 0;
@@ -1357,7 +1375,8 @@ int main(int argc, char* argv[])
                 playback.store(false);
             }
 
-            
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lancer la lecture");
+
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("stop playback");
             }
