@@ -418,20 +418,21 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
 
     alignas(64) std::atomic<bool> playback = false; 
     alignas(64) std::atomic<bool> stop_playback_requested = false;
+    alignas(64) std::atomic<size_t> samples_cursor = 0, next_cursor = 0;
 
     constexpr float norm = 1.f/2.f;
-    inline void process_spectrum_play_back(size_t paneHeight,size_t& next_cursor,int minimum_audio, size_t &samples_cursor, SDL_AudioStream* stream,SDL_Renderer *renderer, std::vector<float> *samples,std::vector<float> *buffer)
+    inline void process_spectrum_play_back(size_t paneHeight,int minimum_audio,  SDL_AudioStream* stream,SDL_Renderer *renderer, std::vector<float> *samples,std::vector<float> *buffer)
     {
             if (playback.load() == true && SDL_GetAudioStreamQueued(stream) < minimum_audio)
             {
                 // this will feed 1024 samples each frame until we get to our maximum. 
                 // generate samples from grooves 
-                next_cursor = std::min(samples->size() - 1, samples_cursor + buffer->size() ) ;
+                next_cursor.store( std::min(samples->size() - 1, samples_cursor.load() + buffer->size() ) );
                 memcpy(buffer->data(), (const void *)(samples->data()+samples_cursor), (next_cursor - samples_cursor) * sizeof(float) );
 
                 // feed the new data to the stream. It will queue at the end, and trickle out as the hardware needs more data. 
                 SDL_PutAudioStreamData(stream, buffer->data(), (next_cursor - samples_cursor) * sizeof(float) );
-                samples_cursor = next_cursor;
+                samples_cursor.store( next_cursor );
                 if ( samples_cursor >= samples->size() - 1 )
                 {
                     playback.store(false);
@@ -458,43 +459,6 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                     }
                     fft(&fftLeft);
                     fft(&fftRight);
-
-                   /* int usableBins = FFT_SIZE /2; // Fréquences utiles uniques
-                    float barWidth = static_cast<float>(WINDOW_WIDTH) / usableBins;
-                    for (int i = 0; i < usableBins; ++i) {
-                        // Calcul de l'amplitude (mise à l'échelle logarithmique visuelle)
-                        float magLeft = std::abs(fftLeft[i]) / std::sqrt(FFT_SIZE);
-                        float magRight = std::abs(fftRight[i]) / std::sqrt(FFT_SIZE);
-
-                        float normLeft = std::clamp(std::log1p(magLeft * 20.0f) *norm, 0.0f, 1.0f);
-                        float normRight = std::clamp(std::log1p(magRight * 20.0f) *norm , 0.0f, 1.0f);
-
-                        int x = static_cast<int>(i * barWidth);
-                        int w = std::max(1, static_cast<int>(barWidth));
-
-                        // --- Canal Gauche (Panneau du haut) ---
-                        int hLeft =  static_cast<int>(normLeft * (paneHeight - 20));
-                        SDL_FRect rectLeft{ (float)x, (float)(paneHeight - hLeft), (float)w, (float)hLeft };
-
-                        uint8_t r = static_cast<uint8_t>(threshold * normLeft * 255.);
-                        uint8_t g = static_cast<uint8_t>((1. - threshold * normLeft) * 255.);
-                        SDL_SetRenderDrawColor(renderer, r, 0, g, 255); // Cyan
-                        SDL_RenderFillRect(renderer, &rectLeft);
-
-                        // --- Canal Droit (Panneau du bas) ---
-                        int hRight =  static_cast<int>(normRight * (paneHeight - 20));
-                        r = static_cast<uint8_t>(threshold * normRight * 255.);
-                        g = static_cast<uint8_t>((1. - threshold * normRight) * 255.);
-                        SDL_FRect rectRight{ (float)x, (float)(paneHeight ), (float)w, (float)hRight };
-                        SDL_SetRenderDrawColor(renderer, r,0,g, 255); // Magenta
-                        SDL_RenderFillRect(renderer, &rectRight);
-                    }
-                        */
-
-                    // Ligne de séparation médiane
-                    //SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
-                    //SDL_RenderLine(renderer, 0, paneHeight, WINDOW_WIDTH, paneHeight);
-
                 }
 
         }
@@ -538,7 +502,8 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
     }
 
     size_t last_audio_cursor_stream = 0;
-    size_t audio_cursor_stream = 0;
+    alignas(64) std::atomic<size_t> audio_cursor_stream = 0;
+
     std::vector<float> tmp_buffer(4 * FFT_SIZE);
     inline void process_spectrum_capture_to_playback(SDL_Renderer* renderer, SDL_AudioStream* playback_stream , SDL_AudioStream* capture_stream, std::vector<float> *buffer)
     {
@@ -564,7 +529,7 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                 if (samplesbuffered == buffer->size()  - 1) 
                 { 
 
-                    audio_cursor_stream  %= buffer->size()  - 1;
+                    audio_cursor_stream.store( audio_cursor_stream % buffer->size()  - 1 );
 
 
                     for (size_t  i = 0; i < FFT_SIZE; ++i) 
@@ -752,14 +717,14 @@ inline void render_geometry_mirror_spectrum
         SDL_GetAudioStreamData(capture_stream,buff.data(),buffer_size);
 
         last_audio_cursor_stream = audio_cursor_stream;
-        audio_cursor_stream = std::min( audio_cursor_stream + buffer_size, buffer->size()  - 1);
+        audio_cursor_stream.store(std::min( audio_cursor_stream + buffer_size, buffer->size()  - 1) );
 
         memcpy(buffer->data() + last_audio_cursor_stream, buff.data(), (audio_cursor_stream-last_audio_cursor_stream) *sizeof(float) );
         
         int samplesbuffered = audio_cursor_stream;
         if (samplesbuffered == buffer->size()  - 1) 
         { 
-            audio_cursor_stream  %= buffer->size()  - 1;
+            audio_cursor_stream.store( audio_cursor_stream.load() % buffer->size()  - 1 );
         
             fft->process_audio_spectrum(buffer,&fft_left,&fft_right );
 
@@ -1061,9 +1026,9 @@ int main(int argc, char* argv[])
     //    size_t channels = 0; 
    // double sample_rate = 44100;
 
-    size_t samples_cursor = 0, next_cursor = 0;
+    alignas(64) std::atomic<size_t> samples_cursor = 0, next_cursor = 0;
 
-
+    float play_position;
 
       /*
     std::thread playback = std::thread([&,channels,sample_rate](spectrogram_renderer *spectrogram)->void
@@ -1196,7 +1161,7 @@ int main(int argc, char* argv[])
         switch(current_window_idx)
         {
             case 0:
-            process_spectrum_play_back(paneHeight,next_cursor,minimum_audio, samples_cursor, playback_stream,renderer, &samples,&buffer);
+            process_spectrum_play_back(paneHeight,minimum_audio, playback_stream,renderer, &samples,&buffer);
             break;
             case 1:
             break;
@@ -1314,6 +1279,11 @@ int main(int argc, char* argv[])
                     elapsed_time_in_seconds(start_playing_time,current_playing_time);
                     std::string d = std::string("playing file: ")+duration_to_hhmmss(elapsed_time_in_seconds(start_playing_time,current_playing_time))+std::string("/")+duration_to_hhmmss(total_playing_time);
                     ImGui::Text(d.c_str());
+                    if (ImGui::SliderFloat("##playing_position", &play_position, 0.0f, samples.size() - 1))
+                    {
+                        audio_cursor_stream.store( play_position );
+                        samples_cursor.store( play_position );
+                    }
                 }
             }
             ImGui::Spacing(); 
