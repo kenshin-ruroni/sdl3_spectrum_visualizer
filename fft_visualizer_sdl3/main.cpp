@@ -1,5 +1,8 @@
 #include <thread>
 #include <chrono>
+#include <functional> // Requis pour std::hash
+#include <unordered_map>
+#include <stdint.h>
 
 #define DR_WAV_IMPLEMENTATION
 #define DR_FLAC_IMPLEMENTATION
@@ -347,6 +350,7 @@ constexpr float threshold = 1.;
     alignas(64) std::atomic<bool> file_loaded = false;
     alignas(64) std::atomic<bool> file_loading = false;
     alignas(64) std::atomic<bool> error_file_loading = false;
+    std::string error_file_loading_msg;
 
 std::vector<uint32_t> pixelBuffer;
     // Ajoute une nouvelle colonne de fréquences calculées et décale le reste de l'image
@@ -452,26 +456,22 @@ std::vector<float> spectrogram_magnitudes = std::vector<float> (FFT_SIZE/2, 0.0f
                 }
 
             int samplesNeeded = buffer->size();
-                if (samplesNeeded >= FFT_SIZE) 
-                { 
-        // Rendu graphique
-                    SDL_SetRenderDrawColor(renderer, 10, 10, 10, 255);
-                    SDL_RenderClear(renderer);
-
-                    for (size_t  i = 0; i < FFT_SIZE; ++i) 
-                    {
-                        currentLeft[i] = gain.load() * (*buffer)[i * 2];
-                        currentRight[i] = gain.load() * (*buffer)[i * 2 + 1];
-                    }
-
-                    for (int i = 0; i < FFT_SIZE; ++i) {
-                        float windowMultiplier = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (FFT_SIZE - 1)));
-                        fftLeft[i] = std::complex<float>(currentLeft[i] * windowMultiplier, 0.0f);
-                        fftRight[i] = std::complex<float>(currentRight[i] * windowMultiplier, 0.0f);
-                    }
-                    fft(&fftLeft);
-                    fft(&fftRight);
+            if (samplesNeeded >= FFT_SIZE) 
+            { 
+                for (size_t  i = 0; i < FFT_SIZE; ++i) 
+                {
+                    currentLeft[i] = gain.load() * (*buffer)[i * 2];
+                    currentRight[i] = gain.load() * (*buffer)[i * 2 + 1];
                 }
+
+                for (int i = 0; i < FFT_SIZE; ++i) {
+                    float windowMultiplier = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (FFT_SIZE - 1)));
+                    fftLeft[i] = std::complex<float>(currentLeft[i] * windowMultiplier, 0.0f);
+                    fftRight[i] = std::complex<float>(currentRight[i] * windowMultiplier, 0.0f);
+                }
+                fft(&fftLeft);
+                fft(&fftRight);
+            }
 
         }
 
@@ -841,6 +841,20 @@ inline void render_geometry_mirror_spectrum
 
 }
 
+    struct audio_file_data_t
+    {
+        std::string path;
+        float duration;
+        std::string title;
+        size_t channels;
+        size_t sample_rate;
+        std::vector<float> samples;
+    };
+
+    std::hash<std::string> string_hasher;
+
+    std::unordered_map<size_t, audio_file_data_t > songs;
+
     static void load_audio_file(const char* file_path, std::vector<float> *samples)
     {
 
@@ -852,6 +866,18 @@ inline void render_geometry_mirror_spectrum
             
             uint c = 2;
             uint s = 44100;
+
+            error_file_loading_msg = "";
+            
+            size_t hash = string_hasher(file);
+
+            if ( songs.find(hash) != songs.end() )
+            {
+                file_loading.store(false);
+                error_file_loading.store(false);
+                error_file_loading_msg = "file already loaded";
+                return;
+            }
 
             auto path = std::filesystem::path(file);
             std::string extension = path.extension().string();
@@ -880,6 +906,19 @@ inline void render_geometry_mirror_spectrum
 
             if ( success )
             {
+                audio_file_data_t data = 
+                {
+                    .path = file,
+                    .duration = ( static_cast<float>(samples->size())/static_cast<float>(c)/static_cast<float>(s) ),
+                    .title = path.filename().string(),
+                    .channels = c,
+                    .sample_rate = s
+                };
+                data.samples.resize(samples->size());
+                memcpy(data.samples.data(), samples->data(), samples->size() * sizeof(float));
+
+                songs.emplace(hash, std::move(data) );
+
                 channels.store(c);
                 sample_rate.store(s);
                 file_loaded.store(true );
@@ -1146,6 +1185,15 @@ int main(int argc, char* argv[])
     std::vector<float> signal(256,0.); 
     std::deque<float> signal_queue(256,0.); 
 
+
+
+    size_t id_selectionne = -1;
+    size_t id_a_supprimer = -1;
+    // Notre map de données
+
+
+    
+    
     while (running ) 
     {
         while (SDL_PollEvent(&event)) 
@@ -1170,6 +1218,8 @@ int main(int argc, char* argv[])
             }
         }
 
+
+
         switch(current_window_idx)
         {
             case 0:
@@ -1185,7 +1235,10 @@ int main(int argc, char* argv[])
             break;
         }
 
+
         SDL_RenderPresent(renderer);
+
+
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
@@ -1267,6 +1320,10 @@ int main(int argc, char* argv[])
             if (error_file_loading.load() == true )
             {
                 std::string m =std::string("error: unable to load file ...")+selected_file_path;
+                if ( !error_file_loading_msg.empty())
+                {
+                    m = error_file_loading_msg;
+                }
                 ImGui::Text(m.c_str());
             }
 
@@ -1394,16 +1451,86 @@ int main(int argc, char* argv[])
 
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lancer la lecture");
 
-            if (ImGui::IsItemHovered()) {
+            if (ImGui::IsItemHovered()) 
+            {
                 ImGui::SetTooltip("stop playback");
             }
+            ImGui::Separator();
+            for (auto const& [id, element] : songs)
+            {
+                // 1. Configuration des drapeaux (Flags)
+                ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+                
+                // Mettre en surbrillance si cet ID est sélectionné
+                if (id_selectionne == id) {
+                    flags |= ImGuiTreeNodeFlags_Selected;
+                }
+
+                // Optionnel : Si vous n'avez pas d'enfants à afficher pour cet élément, 
+                // vous pouvez le traiter comme une feuille directement :
+                // flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+
+                // 2. Rendu du nœud en utilisant l'ID unique de la map
+                // On caste l'ID (uint64_t) en (void*)(uintptr_t) pour le système d'ID d'ImGui
+                bool node_ouvert = ImGui::TreeNodeEx((void*)(uintptr_t)id, flags, "%s", element.title.c_str());
+
+                // 3. Gestion de la sélection au clic
+                // !ImGui::IsItemToggledOpen() évite de sélectionner l'élément si on clique juste sur la flèche
+                if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+                    id_selectionne = id;
+                }
+
+                // --- DEBUT DU MENU CONTEXTUEL (CLIC DROIT) ---
+                // Cette fonction s'associe automatiquement au dernier TreeNodeEx affiché ci-dessus
+                if (ImGui::BeginPopupContextItem()) 
+                {
+                    // Option de sélection rapide au clic droit
+                    if (ImGui::MenuItem("Sélectionner")) {
+                        id_selectionne = id;
+                    }
+                    
+                    ImGui::Separator();
+
+                    // Option de suppression stylisée en rouge
+                    if (ImGui::MenuItem("Supprimer", nullptr, false, true)) {
+                        id_a_supprimer = id; // On mémorise l'ID, on NE supprime PAS tout de suite
+                    }
+
+                    ImGui::EndPopup();
+                }
+
+                // 4. Affichage du contenu intérieur si le nœud est développé
+                if (node_ouvert)
+                {
+                    // On affiche et modifie directement les données de la structure
+
+                    ImGui::Text("path :      %s", songs[id].path.c_str());
+                    ImGui::Text("duration    %s", duration_to_hhmmss((double) songs[id].duration).c_str() );
+                    ImGui::Text("channels    %zu", songs[id].channels);
+                    ImGui::Text("sample rate %zu", songs[id].sample_rate);
+                    
+                    // Obligatoire si node_ouvert est vrai et que NoTreePushOnOpen n'est pas utilisé
+                    ImGui::TreePop(); 
+                }
+            }
+            // 2. SUPPRESSION SÉCURISÉE (En dehors de la boucle de rendu)
+            if (id_a_supprimer != -1) 
+            {
+                songs.erase(id_a_supprimer);
+                
+                // Si l'élément supprimé était celui sélectionné, on réinitialise la sélection
+                if (id_selectionne == id_a_supprimer) {
+                    id_selectionne = 0; 
+                }
+                
+                id_a_supprimer = -1; // Réinitialisation
+            }
         }
+
         ImGui::End();
 
         // 3. Rendu de la scène
         ImGui::Render(); // Calcule les géométries d'ImGui
-
-        ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer_ui);  
 
         SDL_SetRenderDrawColor(renderer_ui, 45, 45, 45, 255);  // Fond gris moyen
         SDL_RenderClear(renderer_ui);
