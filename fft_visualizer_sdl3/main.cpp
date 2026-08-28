@@ -1069,13 +1069,6 @@ int main(int argc, char* argv[])
 
     std::vector<float> samples;
 
-    std::string f = "/home/descourt/Bureau/epic-synthwave-mixtape-for-men-with-balls-of-steel-vol-1.wav"; //R3-099 - A.wav"; //FifeAndDrumsStereo.wav"; // R3-099 - A.wav";
-
-    //f = "/home/descourt/Téléchargements/Procedentem sponsum.wav"; //Recordare virgo mater [TubeRipper.cc].flac";
-
-    //    size_t channels = 0; 
-   // double sample_rate = 44100;
-
     int play_position;
 
       /*
