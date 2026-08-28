@@ -348,6 +348,7 @@ constexpr float threshold = 1.;
         alignas(64) std::atomic<uint> channels = 2; 
     alignas(64) std::atomic<uint> sample_rate = 44100;
     alignas(64) std::atomic<bool> file_loaded = false;
+    alignas(64) std::atomic<bool> update_playback_stream = true;
     alignas(64) std::atomic<bool> file_loading = false;
     alignas(64) std::atomic<bool> error_file_loading = false;
     std::string error_file_loading_msg;
@@ -922,6 +923,7 @@ inline void render_geometry_mirror_spectrum
                 channels.store(c);
                 sample_rate.store(s);
                 file_loaded.store(true );
+                update_playback_stream.store(true);
             }
             file_loading.store(false);
             error_file_loading.store(!success);
@@ -1149,9 +1151,10 @@ int main(int argc, char* argv[])
 
 
             // Configuration Audio SDL3 (Mono, 48kHz)
-        SDL_AudioSpec spec{ SDL_AUDIO_F32, channels.load(), sample_rate.load() };
-        SDL_AudioStream* playback_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL,NULL);
+        
+        SDL_AudioStream* playback_stream = nullptr;
 
+        SDL_AudioSpec spec{ SDL_AUDIO_F32, channels.load(), sample_rate.load() };
         SDL_AudioStream* capture_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, &spec, NULL,NULL);
        
         const int minimum_audio = ( sample_rate * sizeof(float) ) / 2;  //  Half of samples per seconds 
@@ -1300,10 +1303,6 @@ int main(int argc, char* argv[])
                     std::thread( [](std::string file, std::vector<float> *samples, SDL_AudioStream* playback_stream )
                     {
                         load_audio_file(file.c_str(),samples);
-                        if (SDL_AudioStreamDevicePaused(playback_stream)) 
-                        {
-                            SDL_ResumeAudioStreamDevice(playback_stream);
-                        }
                     },
                     selected_file_path,&samples,playback_stream).detach();
                 }
@@ -1359,7 +1358,30 @@ int main(int argc, char* argv[])
             if ( file_loaded && current_window_idx != 2 )
             {
                 if ( playback.load() == false)
-                ImGui::Text("file ready to play");
+                {
+                    if ( update_playback_stream.load() == true)
+                    {
+                        SDL_AudioSpec spec{ SDL_AUDIO_F32, channels.load(), sample_rate.load() };
+                        if ( playback_stream != nullptr)
+                        {
+                            SDL_PauseAudioStreamDevice(playback_stream);
+                            SDL_ClearAudioStream(playback_stream);
+                            SDL_DestroyAudioStream(playback_stream);
+                        }
+                        playback_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL,NULL);
+                        if ( playback_stream == nullptr)
+                        {
+                            error_file_loading_msg = "audio output could not be initialized";
+                        }
+                        else
+                        {
+                            SDL_ResumeAudioStreamDevice(playback_stream);
+                            update_playback_stream.store(false);
+                        }
+
+                    }
+                   ImGui::Text("file ready to play");
+                }
                 else
                 { 
                     std::string c = duration_to_hhmmss(current_playing_time);
